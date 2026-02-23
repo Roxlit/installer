@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::error::{InstallerError, Result};
+use crate::util::expand_tilde;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +42,10 @@ pub async fn save_project(project: ProjectEntry) -> Result<RoxlitConfig> {
         projects: vec![],
         last_active_project: None,
     });
+
+    // Expand tilde so paths are always absolute
+    let mut project = project;
+    project.path = expand_tilde(&project.path);
 
     // Upsert by path
     if let Some(existing) = config.projects.iter_mut().find(|p| p.path == project.path) {

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Play,
@@ -6,6 +7,7 @@ import {
   Plus,
   ExternalLink,
   Code2,
+  Loader2,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
@@ -85,9 +87,23 @@ export function Launcher({
   onOpenEditor,
   onNewProject,
 }: LauncherProps) {
+  const [editorLoading, setEditorLoading] = useState(false);
   const toolName =
     TOOL_OPTIONS.find((t) => t.id === aiTool)?.name ?? "your AI tool";
   const isRunning = rojoStatus === "running" || rojoStatus === "starting";
+
+  async function handleOpenEditor() {
+    if (editorLoading) return;
+    setEditorLoading(true);
+    onOpenEditor();
+    // Cooldown to prevent spam
+    setTimeout(() => setEditorLoading(false), 3000);
+  }
+
+  async function handleStartDev() {
+    if (isRunning) return;
+    onStartDevelopment();
+  }
 
   return (
     <motion.div
@@ -111,12 +127,17 @@ export function Launcher({
           </div>
         </div>
         <button
-          onClick={onOpenEditor}
-          className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+          onClick={handleOpenEditor}
+          disabled={editorLoading}
+          className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-50"
           title={`Open in ${toolName}`}
         >
-          <Code2 className="h-3.5 w-3.5" />
-          Open Editor
+          {editorLoading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Code2 className="h-3.5 w-3.5" />
+          )}
+          {editorLoading ? "Opening..." : "Open Editor"}
         </button>
       </div>
 
@@ -124,7 +145,7 @@ export function Launcher({
       <div className="mt-5 flex items-center gap-3">
         {!isRunning ? (
           <button
-            onClick={onStartDevelopment}
+            onClick={handleStartDev}
             className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-500 py-3 text-sm font-semibold text-black transition-colors hover:bg-emerald-400"
           >
             <Play className="h-4 w-4" />
@@ -133,10 +154,15 @@ export function Launcher({
         ) : (
           <button
             onClick={onStopRojo}
-            className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 py-3 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/20"
+            disabled={rojoStatus === "starting"}
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 py-3 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-60"
           >
-            <Square className="h-4 w-4" />
-            Stop Rojo
+            {rojoStatus === "starting" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Square className="h-4 w-4" />
+            )}
+            {rojoStatus === "starting" ? "Starting..." : "Stop Rojo"}
           </button>
         )}
       </div>

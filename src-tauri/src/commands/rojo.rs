@@ -5,6 +5,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
 use crate::error::{InstallerError, Result};
+use crate::util::expand_tilde;
 
 /// Events streamed from the rojo serve process to the frontend.
 #[derive(Clone, Serialize)]
@@ -86,6 +87,7 @@ pub async fn start_rojo(
     }
 
     let rojo = rojo_bin_path();
+    let project_path = expand_tilde(&project_path);
     let mut child = tokio::process::Command::new(&rojo)
         .arg("serve")
         .current_dir(&project_path)

@@ -3,6 +3,7 @@ use tauri::Manager;
 mod commands;
 mod error;
 mod templates;
+pub mod util;
 
 /// Open a folder in the user's code editor (cursor, code, etc.)
 #[tauri::command]
@@ -14,6 +15,7 @@ async fn open_in_editor(editor: String, path: String) -> Result<(), String> {
         _ => "code",
     };
 
+    let path = util::expand_tilde(&path);
     let result = tokio::process::Command::new(cmd)
         .arg(&path)
         .spawn();
