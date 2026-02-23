@@ -2,7 +2,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, X } from "lucide-react";
 import { RoxlitIcon } from "./ToolIcons";
 
-export function Titlebar() {
+interface TitlebarProps {
+  title?: string;
+}
+
+export function Titlebar({ title = "Roxlit" }: TitlebarProps) {
   const appWindow = getCurrentWindow();
 
   return (
@@ -11,7 +15,7 @@ export function Titlebar() {
       className="flex h-10 shrink-0 items-center border-b border-white/10 bg-black/80 px-4"
     >
       <RoxlitIcon className="h-4 w-4 text-emerald-400" />
-      <span className="ml-2 text-xs text-zinc-400">Roxlit Installer</span>
+      <span className="ml-2 text-xs text-zinc-400">{title}</span>
 
       <div className="ml-auto flex gap-1">
         <button

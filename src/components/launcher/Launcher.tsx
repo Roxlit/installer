@@ -1,0 +1,181 @@
+import { motion } from "framer-motion";
+import {
+  Play,
+  Square,
+  FolderOpen,
+  Plus,
+  ExternalLink,
+  Code2,
+} from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
+import { LogTerminal } from "./LogTerminal";
+import { TOOL_OPTIONS } from "@/lib/types";
+import type { RojoStatus } from "@/lib/types";
+
+async function openExternal(url: string) {
+  try {
+    await openUrl(url);
+  } catch {
+    try {
+      await invoke("open_url_fallback", { url });
+    } catch {
+      window.open(url, "_blank");
+    }
+  }
+}
+
+interface LauncherProps {
+  projectName: string;
+  projectPath: string;
+  aiTool: string;
+  rojoStatus: RojoStatus;
+  rojoPort: number | null;
+  rojoLogs: string[];
+  error: string | null;
+  onStartDevelopment: () => void;
+  onStopRojo: () => void;
+  onOpenEditor: () => void;
+  onNewProject: () => void;
+}
+
+function StatusDot({ status }: { status: RojoStatus }) {
+  const colors: Record<RojoStatus, string> = {
+    stopped: "bg-zinc-500",
+    starting: "bg-yellow-400 animate-pulse",
+    running: "bg-emerald-400",
+    error: "bg-red-400",
+  };
+  return <div className={`h-2 w-2 rounded-full ${colors[status]}`} />;
+}
+
+function StatusText({
+  status,
+  port,
+}: {
+  status: RojoStatus;
+  port: number | null;
+}) {
+  switch (status) {
+    case "stopped":
+      return <span className="text-zinc-500">Rojo stopped</span>;
+    case "starting":
+      return <span className="text-yellow-400">Starting Rojo...</span>;
+    case "running":
+      return (
+        <span className="text-emerald-400">
+          Rojo running{port ? ` on port ${port}` : ""}
+        </span>
+      );
+    case "error":
+      return <span className="text-red-400">Rojo error</span>;
+  }
+}
+
+export function Launcher({
+  projectName,
+  projectPath,
+  aiTool,
+  rojoStatus,
+  rojoPort,
+  rojoLogs,
+  error,
+  onStartDevelopment,
+  onStopRojo,
+  onOpenEditor,
+  onNewProject,
+}: LauncherProps) {
+  const toolName =
+    TOOL_OPTIONS.find((t) => t.id === aiTool)?.name ?? "your AI tool";
+  const isRunning = rojoStatus === "running" || rojoStatus === "starting";
+
+  return (
+    <motion.div
+      className="flex flex-1 flex-col px-6 py-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+    >
+      {/* Project info */}
+      <div className="flex items-start justify-between">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+            <FolderOpen className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold">{projectName}</h2>
+            <p className="mt-0.5 font-mono text-xs text-zinc-500">
+              {projectPath}
+            </p>
+            <p className="mt-0.5 text-xs text-zinc-500">{toolName}</p>
+          </div>
+        </div>
+        <button
+          onClick={onOpenEditor}
+          className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+          title={`Open in ${toolName}`}
+        >
+          <Code2 className="h-3.5 w-3.5" />
+          Open Editor
+        </button>
+      </div>
+
+      {/* Main action + status */}
+      <div className="mt-5 flex items-center gap-3">
+        {!isRunning ? (
+          <button
+            onClick={onStartDevelopment}
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-500 py-3 text-sm font-semibold text-black transition-colors hover:bg-emerald-400"
+          >
+            <Play className="h-4 w-4" />
+            Start Development
+          </button>
+        ) : (
+          <button
+            onClick={onStopRojo}
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 py-3 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/20"
+          >
+            <Square className="h-4 w-4" />
+            Stop Rojo
+          </button>
+        )}
+      </div>
+
+      {/* Status bar */}
+      <div className="mt-3 flex items-center gap-2 text-xs">
+        <StatusDot status={rojoStatus} />
+        <StatusText status={rojoStatus} port={rojoPort} />
+      </div>
+
+      {/* Error display */}
+      {error && (
+        <div className="mt-2 rounded-md border border-red-500/20 bg-red-500/[0.05] px-3 py-2 text-xs text-red-400">
+          {error}
+        </div>
+      )}
+
+      {/* Terminal */}
+      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+        <LogTerminal logs={rojoLogs} />
+      </div>
+
+      {/* Bottom bar */}
+      <div className="mt-3 flex items-center justify-between">
+        <button
+          onClick={onNewProject}
+          className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New Project
+        </button>
+        <button
+          onClick={() => openExternal("https://discord.gg/roxlit")}
+          className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-[#5865F2]"
+        >
+          Join Discord
+          <ExternalLink className="h-3 w-3" />
+        </button>
+      </div>
+    </motion.div>
+  );
+}

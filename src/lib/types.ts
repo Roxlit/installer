@@ -103,3 +103,32 @@ export interface InstallConfig {
   skipRojo: boolean;
   pluginsPath: string | null;
 }
+
+// --- App Mode ---
+
+export type AppMode = "loading" | "installer" | "launcher";
+
+// --- Config types (matches Rust RoxlitConfig) ---
+
+export interface ProjectEntry {
+  name: string;
+  path: string;
+  aiTool: string;
+  createdAt: string;
+}
+
+export interface RoxlitConfig {
+  version: number;
+  projects: ProjectEntry[];
+  lastActiveProject: string | null;
+}
+
+// --- Rojo events (matches Rust RojoEvent) ---
+
+export type RojoEvent =
+  | { event: "output"; data: { line: string; stream: string } }
+  | { event: "started"; data: { port: number } }
+  | { event: "stopped"; data: { code: number | null } }
+  | { event: "error"; data: { message: string } };
+
+export type RojoStatus = "stopped" | "starting" | "running" | "error";

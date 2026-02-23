@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 mod commands;
 mod error;
 mod templates;
@@ -25,7 +27,6 @@ async fn open_in_editor(editor: String, path: String) -> Result<(), String> {
 /// Fallback URL opener for WSL development where xdg-open doesn't work.
 #[tauri::command]
 async fn open_url_fallback(url: String) -> Result<(), String> {
-    // Try wslview first (from wslu package), then cmd.exe /c start
     let result = tokio::process::Command::new("wslview")
         .arg(&url)
         .output()
@@ -51,12 +52,26 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(commands::rojo::RojoProcess::default())
         .invoke_handler(tauri::generate_handler![
             commands::detect::detect_environment,
             commands::install::run_installation,
+            commands::config::load_config,
+            commands::config::save_project,
+            commands::rojo::start_rojo,
+            commands::rojo::stop_rojo,
+            commands::rojo::get_rojo_status,
             open_url_fallback,
             open_in_editor,
         ])
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                // Kill rojo serve when the window is closed
+                if let Some(state) = _window.try_state::<commands::rojo::RojoProcess>() {
+                    state.inner().kill_sync();
+                }
+            }
+        })
         .run(tauri::generate_context!())
-        .expect("failed to run Roxlit Installer");
+        .expect("failed to run Roxlit");
 }
