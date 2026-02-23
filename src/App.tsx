@@ -77,6 +77,7 @@ export default function App() {
             <Complete
               key="complete"
               projectPath={installer.projectFullPath}
+              aiTool={installer.aiTool!}
               aiToolName={aiToolName}
             />
           )}

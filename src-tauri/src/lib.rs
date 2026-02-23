@@ -2,6 +2,26 @@ mod commands;
 mod error;
 mod templates;
 
+/// Open a folder in the user's code editor (cursor, code, etc.)
+#[tauri::command]
+async fn open_in_editor(editor: String, path: String) -> Result<(), String> {
+    let cmd = match editor.as_str() {
+        "cursor" => "cursor",
+        "claude" => "claude",
+        "vscode" | "windsurf" => "code",
+        _ => "code",
+    };
+
+    let result = tokio::process::Command::new(cmd)
+        .arg(&path)
+        .spawn();
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("Failed to open {cmd}: {e}")),
+    }
+}
+
 /// Fallback URL opener for WSL development where xdg-open doesn't work.
 #[tauri::command]
 async fn open_url_fallback(url: String) -> Result<(), String> {
@@ -35,6 +55,7 @@ pub fn run() {
             commands::detect::detect_environment,
             commands::install::run_installation,
             open_url_fallback,
+            open_in_editor,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Roxlit Installer");
