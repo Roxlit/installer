@@ -38,7 +38,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Roxlit-Installer-portable
-          path: src-tauri/target/release/Roxlit Installer.exe
+          path: src-tauri/target/release/roxlit-installer.exe
 
       - name: Upload NSIS installer
         uses: actions/upload-artifact@v4
