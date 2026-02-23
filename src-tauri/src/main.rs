@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    roxlit_installer_lib::run();
+    roxlit_lib::run();
 }

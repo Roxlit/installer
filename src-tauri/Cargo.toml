@@ -1,12 +1,12 @@
 [package]
-name = "roxlit-installer"
+name = "roxlit"
 version = "0.1.0"
-description = "Desktop installer for Roxlit — sets up AI + Roblox Studio development"
+description = "Roxlit — launcher for AI-powered Roblox development"
 authors = ["Roxlit"]
 edition = "2021"
 
 [lib]
-name = "roxlit_installer_lib"
+name = "roxlit_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]

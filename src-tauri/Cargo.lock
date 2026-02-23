@@ -3276,7 +3276,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "roxlit-installer"
+name = "roxlit"
 version = "0.1.0"
 dependencies = [
  "dirs",

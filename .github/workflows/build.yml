@@ -1,4 +1,4 @@
-name: Build Installer
+name: Build Roxlit
 
 on:
   push:
@@ -37,11 +37,11 @@ jobs:
       - name: Upload portable exe
         uses: actions/upload-artifact@v4
         with:
-          name: Roxlit-Installer-portable
-          path: src-tauri/target/release/roxlit-installer.exe
+          name: Roxlit-portable
+          path: src-tauri/target/release/roxlit.exe
 
-      - name: Upload NSIS installer
+      - name: Upload setup installer
         uses: actions/upload-artifact@v4
         with:
-          name: Roxlit-Installer-setup
+          name: Roxlit-Setup
           path: src-tauri/target/release/bundle/nsis/*.exe
