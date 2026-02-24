@@ -227,6 +227,37 @@ pub async fn get_rbxsync_status(state: tauri::State<'_, RbxSyncProcess>) -> Resu
     }
 }
 
+/// Run `rbxsync extract` to do a full DataModel extraction.
+/// Should be called after Studio connects to get the initial state of all instances.
+#[tauri::command]
+pub async fn extract_rbxsync(project_path: String) -> Result<String> {
+    let rbxsync = rbxsync_bin_path();
+    let project_path = expand_tilde(&project_path);
+    let mut cmd = tokio::process::Command::new(&rbxsync);
+    cmd.arg("extract")
+        .current_dir(&project_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| InstallerError::Custom(format!("Failed to run rbxsync extract: {e}")))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if output.status.success() {
+        Ok(format!("{}{}", stdout, stderr))
+    } else {
+        Err(InstallerError::Custom(format!(
+            "rbxsync extract failed: {}{}",
+            stdout, stderr
+        )))
+    }
+}
+
 /// Strip ANSI escape sequences from a string.
 fn strip_ansi(s: &str) -> String {
     let mut result = String::with_capacity(s.len());

@@ -198,6 +198,9 @@ export function useLauncher() {
     };
   }
 
+  // Track whether we already triggered extraction for this session
+  const extractionTriggeredRef = useRef(false);
+
   // --- RbxSync event handler ---
   function createRbxSyncEventHandler(): (event: RbxSyncEvent) => void {
     return (event: RbxSyncEvent) => {
@@ -208,6 +211,36 @@ export function useLauncher() {
             line: event.data.line,
             stream: event.data.stream,
           });
+          // Auto-extract when Studio connects for the first time
+          if (
+            !extractionTriggeredRef.current &&
+            event.data.line.includes("Studio registered")
+          ) {
+            extractionTriggeredRef.current = true;
+            const project = projectRef.current;
+            if (project) {
+              dispatch({
+                type: "RBXSYNC_OUTPUT",
+                line: "Extracting full DataModel from Studio...",
+                stream: "stdout",
+              });
+              invoke("extract_rbxsync", { projectPath: project.path })
+                .then((result) => {
+                  dispatch({
+                    type: "RBXSYNC_OUTPUT",
+                    line: `Extraction complete: ${result}`,
+                    stream: "stdout",
+                  });
+                })
+                .catch((err) => {
+                  dispatch({
+                    type: "RBXSYNC_OUTPUT",
+                    line: `Extraction failed: ${err instanceof Error ? err.message : String(err)}`,
+                    stream: "stderr",
+                  });
+                });
+            }
+          }
           break;
         case "started":
           dispatch({ type: "RBXSYNC_STARTED" });
@@ -306,6 +339,7 @@ export function useLauncher() {
     dispatch({ type: "RBXSYNC_STARTING" });
     rbxsyncStopRequestedRef.current = false;
     rbxsyncRestartCountRef.current = 0;
+    extractionTriggeredRef.current = false;
 
     const channel = new Channel<RbxSyncEvent>();
     rbxsyncChannelRef.current = channel;

@@ -105,6 +105,7 @@ pub fn run() {
             commands::rbxsync::start_rbxsync,
             commands::rbxsync::stop_rbxsync,
             commands::rbxsync::get_rbxsync_status,
+            commands::rbxsync::extract_rbxsync,
             open_url_fallback,
             open_in_editor,
         ])
