@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import roxlitIcon from "@/assets/icon.png";
 
 interface IconProps {
   className?: string;
@@ -46,17 +47,6 @@ export function RobloxStudioIcon({ className }: IconProps) {
 
 export function RoxlitIcon({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 512 512" fill="none" className={cn("h-5 w-5", className)} xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="roxlit-grid" width="32" height="32" patternUnits="userSpaceOnUse">
-          <path d="M 32 0 L 0 0 0 32" fill="none" stroke="rgba(0,0,0,0.30)" strokeWidth="1"/>
-        </pattern>
-      </defs>
-      <rect width="512" height="512" rx="112" fill="#10b981"/>
-      <rect width="512" height="512" rx="112" fill="url(#roxlit-grid)"/>
-      <path d="M 135 100 C 100 100 95 135 95 185 L 95 230 Q 95 256 65 256 Q 95 256 95 282 L 95 327 C 95 377 100 412 135 412" fill="none" stroke="#fff" strokeWidth="22" strokeLinecap="round"/>
-      <path d="M 377 100 C 412 100 417 135 417 185 L 417 230 Q 417 256 447 256 Q 417 256 417 282 L 417 327 C 417 377 412 412 377 412" fill="none" stroke="#fff" strokeWidth="22" strokeLinecap="round"/>
-      <path fill="#fff" fillRule="evenodd" d="M 195 140 L 300 140 C 380 140 380 290 300 290 L 275 290 L 370 390 L 315 390 L 240 300 L 240 390 L 195 390 Z M 240 185 L 292 185 C 342 185 342 248 292 248 L 240 248 Z"/>
-    </svg>
+    <img src={roxlitIcon} alt="Roxlit" className={cn("h-5 w-5 rounded-sm", className)} />
   );
 }
