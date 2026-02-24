@@ -80,6 +80,33 @@ return Shared
 "#
 }
 
+/// Returns the rbxsync.json configuration.
+/// Excludes services that Rojo manages (scripts) so RbxSync only handles instances.
+pub fn rbxsync_json(project_name: &str) -> String {
+    format!(
+        r#"{{
+  "name": "{project_name}",
+  "tree": "./src",
+  "config": {{
+    "excludeServices": [
+      "ServerScriptService",
+      "ReplicatedStorage",
+      "StarterPlayer",
+      "CoreGui",
+      "CorePackages"
+    ],
+    "scriptSourceMode": "external"
+  }},
+  "sync": {{
+    "mode": "bidirectional",
+    "conflictResolution": "keepLocal",
+    "autoSync": true
+  }}
+}}
+"#
+    )
+}
+
 /// Returns the AI context file content with Roblox/Luau development instructions.
 /// This is the same content regardless of AI tool — only the filename changes.
 pub fn ai_context(project_name: &str, mcp_available: bool) -> String {
@@ -91,9 +118,9 @@ This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync
 
 ### How it works
 
-- **Rojo**: Syncs `src/` scripts to the Roblox DataModel (one-directional: filesystem → Studio)
-- **RbxSync**: Syncs ALL instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files)
-- Both run simultaneously — Rojo handles scripts, RbxSync handles everything else
+- **Rojo**: Syncs `src/` Luau scripts to the Roblox DataModel (filesystem → Studio). Handles: ServerScriptService, ReplicatedStorage, StarterPlayerScripts
+- **RbxSync**: Syncs instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files). Handles: Workspace, Lighting, SoundService, StarterGui, StarterPack, ServerStorage, and other non-script services
+- Both run simultaneously with no overlap — configured via `rbxsync.json` which excludes services Rojo manages
 
 ### IMPORTANT: Activating the RbxSync Plugin
 
@@ -132,9 +159,9 @@ This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync
 
 ### How it works
 
-- **Rojo**: Syncs `src/` scripts to the Roblox DataModel (one-directional: filesystem → Studio)
-- **RbxSync**: Syncs ALL instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files)
-- Both run simultaneously — Rojo handles scripts, RbxSync handles everything else
+- **Rojo**: Syncs `src/` Luau scripts to the Roblox DataModel (filesystem → Studio). Handles: ServerScriptService, ReplicatedStorage, StarterPlayerScripts
+- **RbxSync**: Syncs instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files). Handles: Workspace, Lighting, SoundService, StarterGui, StarterPack, ServerStorage, and other non-script services
+- Both run simultaneously with no overlap — configured via `rbxsync.json` which excludes services Rojo manages
 
 ### IMPORTANT: Activating the RbxSync Plugin
 

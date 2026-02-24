@@ -37,6 +37,12 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
         templates::shared_module(),
     )?;
 
+    // RbxSync config — exclude services Rojo handles, sync only instances
+    fs::write(
+        root.join("rbxsync.json"),
+        templates::rbxsync_json(project_name),
+    )?;
+
     // RbxSync ignore file
     fs::write(
         root.join(".rbxsyncignore"),
