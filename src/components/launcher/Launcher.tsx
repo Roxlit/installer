@@ -66,7 +66,18 @@ function StatusText({
     case "running":
       return (
         <span className="text-emerald-400">
-          Rojo running{port ? ` on port ${port}` : ""}
+          Rojo running
+          {port ? (
+            <>
+              {" on "}
+              <button
+                onClick={() => openExternal(`http://localhost:${port}`)}
+                className="underline decoration-emerald-400/50 hover:decoration-emerald-400 transition-colors"
+              >
+                localhost:{port}
+              </button>
+            </>
+          ) : ""}
         </span>
       );
     case "error":
