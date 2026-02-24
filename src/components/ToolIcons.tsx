@@ -54,11 +54,9 @@ export function RoxlitIcon({ className }: IconProps) {
       </defs>
       <rect width="512" height="512" rx="112" fill="#10b981"/>
       <rect width="512" height="512" rx="112" fill="url(#roxlit-grid)"/>
-      <path d="M 100 120 C 80 120 78 150 78 190 L 78 236 Q 78 256 58 256 Q 78 256 78 276 L 78 322 C 78 362 80 392 100 392" fill="none" stroke="rgba(255,255,255,0.80)" strokeWidth="6" strokeLinecap="round"/>
-      <path d="M 412 120 C 432 120 434 150 434 190 L 434 236 Q 434 256 454 256 Q 434 256 434 276 L 434 322 C 434 362 432 392 412 392" fill="none" stroke="rgba(255,255,255,0.80)" strokeWidth="6" strokeLinecap="round"/>
-      <g transform="translate(31.6, 38.4) scale(0.85)">
-        <path fill="#fff" fillRule="evenodd" d="M 148 80 L 280 80 C 388 80 388 272 280 272 L 244 272 L 380 432 L 310 432 L 200 284 L 200 432 L 148 432 Z M 200 132 L 270 132 C 338 132 338 220 270 220 L 200 220 Z"/>
-      </g>
+      <path d="M 135 100 C 100 100 95 135 95 185 L 95 230 Q 95 256 65 256 Q 95 256 95 282 L 95 327 C 95 377 100 412 135 412" fill="none" stroke="#fff" strokeWidth="22" strokeLinecap="round"/>
+      <path d="M 377 100 C 412 100 417 135 417 185 L 417 230 Q 417 256 447 256 Q 417 256 417 282 L 417 327 C 417 377 412 412 377 412" fill="none" stroke="#fff" strokeWidth="22" strokeLinecap="round"/>
+      <path fill="#fff" fillRule="evenodd" d="M 195 140 L 300 140 C 380 140 380 290 300 290 L 275 290 L 370 390 L 315 390 L 240 300 L 240 390 L 195 390 Z M 240 185 L 292 185 C 342 185 342 248 292 248 L 240 248 Z"/>
     </svg>
   );
 }
