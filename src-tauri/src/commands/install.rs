@@ -7,6 +7,9 @@ use std::path::PathBuf;
 use tauri::ipc::Channel;
 use tokio::io::AsyncWriteExt;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 /// Progress events streamed from Rust to the React frontend via Channel.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "event", content = "data")]
@@ -358,10 +361,11 @@ async fn install_aftman(on_event: &Channel<SetupEvent>) -> Result<()> {
         "aftman"
     });
 
-    let output = tokio::process::Command::new(&aftman_bin)
-        .arg("self-install")
-        .output()
-        .await?;
+    let mut cmd = tokio::process::Command::new(&aftman_bin);
+    cmd.arg("self-install");
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd.output().await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -418,12 +422,13 @@ async fn install_rojo(config: &InstallConfig, on_event: &Channel<SetupEvent>) ->
         })
         .map_err(|e| InstallerError::Custom(e.to_string()))?;
 
-    let output = tokio::process::Command::new(&aftman_bin)
-        .arg("install")
+    let mut cmd = tokio::process::Command::new(&aftman_bin);
+    cmd.arg("install")
         .arg("--no-trust-check")
-        .current_dir(&project_path)
-        .output()
-        .await?;
+        .current_dir(&project_path);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd.output().await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

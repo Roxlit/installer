@@ -23,17 +23,17 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
 
     // Starter scripts so the project isn't empty
     fs::write(
-        root.join("src").join("server").join("init.server.luau"),
+        root.join("src").join("server").join("main.server.luau"),
         templates::server_script(),
     )?;
 
     fs::write(
-        root.join("src").join("client").join("init.client.luau"),
+        root.join("src").join("client").join("main.client.luau"),
         templates::client_script(),
     )?;
 
     fs::write(
-        root.join("src").join("shared").join("init.luau"),
+        root.join("src").join("shared").join("Shared.luau"),
         templates::shared_module(),
     )?;
 

@@ -7,13 +7,17 @@ pub fn project_json(project_name: &str) -> String {
     "$className": "DataModel",
     "ServerScriptService": {{
       "$className": "ServerScriptService",
-      "$path": "src/server"
+      "Server": {{
+        "$path": "src/server"
+      }}
     }},
     "StarterPlayer": {{
       "$className": "StarterPlayer",
       "StarterPlayerScripts": {{
         "$className": "StarterPlayerScripts",
-        "$path": "src/client"
+        "Client": {{
+          "$path": "src/client"
+        }}
       }}
     }},
     "ReplicatedStorage": {{

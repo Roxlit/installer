@@ -4,6 +4,9 @@ use tauri::ipc::Channel;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 use crate::error::{InstallerError, Result};
 use crate::util::expand_tilde;
 
@@ -88,13 +91,15 @@ pub async fn start_rojo(
 
     let rojo = rojo_bin_path();
     let project_path = expand_tilde(&project_path);
-    let mut child = tokio::process::Command::new(&rojo)
-        .arg("serve")
+    let mut cmd = tokio::process::Command::new(&rojo);
+    cmd.arg("serve")
         .current_dir(&project_path)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
+        .kill_on_drop(true);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let mut child = cmd.spawn()
         .map_err(|e| InstallerError::Custom(format!("Failed to start rojo: {e}")))?;
 
     let stdout = child.stdout.take();
