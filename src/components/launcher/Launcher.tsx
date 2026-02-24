@@ -195,10 +195,10 @@ export function Launcher({
           New Project
         </button>
         <button
-          onClick={() => openExternal("https://discord.gg/roxlit")}
-          className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-[#5865F2]"
+          onClick={() => openExternal("https://github.com/Roxlit/installer/discussions")}
+          className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
         >
-          Join Discord
+          Feedback
           <ExternalLink className="h-3 w-3" />
         </button>
       </div>

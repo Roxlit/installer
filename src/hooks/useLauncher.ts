@@ -3,6 +3,9 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import type { ProjectEntry, RojoEvent, RojoStatus } from "@/lib/types";
 
 const MAX_LOGS = 500;
+const MAX_AUTO_RESTARTS = 3;
+const RESTART_WINDOW_MS = 60_000; // reset counter after 1 min of stability
+const RESTART_DELAY_MS = 2_000;
 
 interface LauncherState {
   project: ProjectEntry | null;
@@ -14,7 +17,7 @@ interface LauncherState {
 
 type Action =
   | { type: "SET_PROJECT"; project: ProjectEntry }
-  | { type: "ROJO_STARTING" }
+  | { type: "ROJO_STARTING"; keepLogs?: boolean }
   | { type: "ROJO_STARTED"; port: number }
   | { type: "ROJO_OUTPUT"; line: string; stream: string }
   | { type: "ROJO_STOPPED"; code: number | null }
@@ -38,7 +41,7 @@ function reducer(state: LauncherState, action: Action): LauncherState {
         ...state,
         rojoStatus: "starting",
         rojoPort: null,
-        rojoLogs: [],
+        rojoLogs: action.keepLogs ? state.rojoLogs : [],
         error: null,
       };
     case "ROJO_STARTED":
@@ -65,20 +68,21 @@ function reducer(state: LauncherState, action: Action): LauncherState {
 export function useLauncher() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const channelRef = useRef<Channel<RojoEvent> | null>(null);
+  const projectRef = useRef<ProjectEntry | null>(null);
+  const stopRequestedRef = useRef(false);
+  const restartCountRef = useRef(0);
+  const lastCrashTimeRef = useRef(0);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Keep projectRef in sync
   const setProject = useCallback((project: ProjectEntry) => {
+    projectRef.current = project;
     dispatch({ type: "SET_PROJECT", project });
   }, []);
 
-  const startRojo = useCallback(async () => {
-    if (!state.project) return;
-
-    dispatch({ type: "ROJO_STARTING" });
-
-    const channel = new Channel<RojoEvent>();
-    channelRef.current = channel;
-
-    channel.onmessage = (event) => {
+  // Shared event handler factory — used for both initial start and auto-restarts
+  function createEventHandler(): (event: RojoEvent) => void {
+    return (event: RojoEvent) => {
       switch (event.event) {
         case "output":
           dispatch({
@@ -89,21 +93,84 @@ export function useLauncher() {
           break;
         case "started":
           dispatch({ type: "ROJO_STARTED", port: event.data.port });
+          // Reset crash counter after running stable for a while
+          setTimeout(() => {
+            restartCountRef.current = 0;
+          }, RESTART_WINDOW_MS);
           break;
-        case "stopped":
-          dispatch({ type: "ROJO_STOPPED", code: event.data.code });
+        case "stopped": {
           channelRef.current = null;
+          const wasRequested = stopRequestedRef.current;
+          stopRequestedRef.current = false;
+
+          if (!wasRequested && projectRef.current) {
+            // Unexpected crash — try auto-restart
+            const now = Date.now();
+            if (now - lastCrashTimeRef.current > RESTART_WINDOW_MS) {
+              restartCountRef.current = 0;
+            }
+            lastCrashTimeRef.current = now;
+            restartCountRef.current++;
+
+            if (restartCountRef.current <= MAX_AUTO_RESTARTS) {
+              dispatch({
+                type: "ROJO_OUTPUT",
+                line: `Rojo crashed (exit code ${event.data.code}). Restarting automatically (${restartCountRef.current}/${MAX_AUTO_RESTARTS})...`,
+                stream: "stderr",
+              });
+              dispatch({ type: "ROJO_STARTING", keepLogs: true });
+
+              const projectPath = projectRef.current.path;
+              restartTimerRef.current = setTimeout(() => {
+                const ch = new Channel<RojoEvent>();
+                channelRef.current = ch;
+                ch.onmessage = createEventHandler();
+                invoke("start_rojo", {
+                  projectPath,
+                  onEvent: ch,
+                }).catch((err) => {
+                  dispatch({
+                    type: "ROJO_ERROR",
+                    message:
+                      err instanceof Error ? err.message : String(err),
+                  });
+                });
+              }, RESTART_DELAY_MS);
+              return; // Don't dispatch ROJO_STOPPED
+            }
+            // Max retries exhausted
+            dispatch({
+              type: "ROJO_OUTPUT",
+              line: `Rojo crashed ${MAX_AUTO_RESTARTS} times. Click "Start Development" to try again.`,
+              stream: "stderr",
+            });
+          }
+          dispatch({ type: "ROJO_STOPPED", code: event.data.code });
           break;
+        }
         case "error":
           dispatch({ type: "ROJO_ERROR", message: event.data.message });
           channelRef.current = null;
           break;
       }
     };
+  }
+
+  const startRojo = useCallback(async () => {
+    const project = projectRef.current;
+    if (!project) return;
+
+    dispatch({ type: "ROJO_STARTING" });
+    stopRequestedRef.current = false;
+    restartCountRef.current = 0;
+
+    const channel = new Channel<RojoEvent>();
+    channelRef.current = channel;
+    channel.onmessage = createEventHandler();
 
     try {
       await invoke("start_rojo", {
-        projectPath: state.project.path,
+        projectPath: project.path,
         onEvent: channel,
       });
     } catch (err) {
@@ -112,9 +179,14 @@ export function useLauncher() {
         message: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [state.project]);
+  }, []);
 
   const stopRojo = useCallback(async () => {
+    stopRequestedRef.current = true;
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     try {
       await invoke("stop_rojo");
       dispatch({ type: "ROJO_STOPPED", code: null });
@@ -128,7 +200,8 @@ export function useLauncher() {
   }, []);
 
   const startDevelopment = useCallback(async () => {
-    if (!state.project) return;
+    const project = projectRef.current;
+    if (!project) return;
 
     // Start rojo first
     await startRojo();
@@ -136,25 +209,26 @@ export function useLauncher() {
     // Then open editor
     try {
       await invoke("open_in_editor", {
-        editor: state.project.aiTool,
-        path: state.project.path,
+        editor: project.aiTool,
+        path: project.path,
       });
     } catch {
       // Editor open failure is non-critical
     }
-  }, [state.project, startRojo]);
+  }, [startRojo]);
 
   const openEditor = useCallback(async () => {
-    if (!state.project) return;
+    const project = projectRef.current;
+    if (!project) return;
     try {
       await invoke("open_in_editor", {
-        editor: state.project.aiTool,
-        path: state.project.path,
+        editor: project.aiTool,
+        path: project.path,
       });
     } catch {
       // Non-critical
     }
-  }, [state.project]);
+  }, []);
 
   const clearLogs = useCallback(() => {
     dispatch({ type: "CLEAR_LOGS" });

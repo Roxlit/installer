@@ -125,7 +125,8 @@ pub async fn start_rojo(
 
             loop {
                 match lines.next_line().await {
-                    Ok(Some(line)) => {
+                    Ok(Some(raw_line)) => {
+                        let line = strip_ansi(&raw_line);
                         // Try to detect the port from rojo output
                         if !port_detected {
                             if let Some(port) = parse_rojo_port(&line) {
@@ -169,7 +170,8 @@ pub async fn start_rojo(
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            while let Ok(Some(raw_line)) = lines.next_line().await {
+                let line = strip_ansi(&raw_line);
                 let _ = event_stderr.send(RojoEvent::Output {
                     line,
                     stream: "stderr".into(),
@@ -228,6 +230,29 @@ pub async fn get_rojo_status(state: tauri::State<'_, RojoProcess>) -> Result<boo
     } else {
         Ok(false)
     }
+}
+
+/// Strip ANSI escape sequences (e.g. `\x1b[32m`) from a string.
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip ESC + '[' + params + final letter
+            if let Some(next) = chars.next() {
+                if next == '[' {
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 /// Parse the port number from rojo serve output.
