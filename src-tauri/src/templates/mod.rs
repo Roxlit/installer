@@ -1,3 +1,5 @@
+pub mod context_packs;
+
 /// Returns the default.project.json content for Rojo.
 pub fn project_json(project_name: &str) -> String {
     format!(
@@ -297,7 +299,20 @@ end
 2. **Filtering Enabled**: Clients cannot directly modify the server's state. Use RemoteEvents/RemoteFunctions for communication.
 3. **Player lifecycle**: Use `Players.PlayerAdded` for setup and `Players.PlayerRemoving` for cleanup/saving.
 4. **Testing**: Use Studio's "Run" mode (server + client) for networking tests, not "Play Solo".
-{rbxsync_section}## Roxlit Launcher
+{rbxsync_section}## Roblox Context Packs
+
+This project includes curated Roblox documentation in `.roxlit/context/`. Before writing code that involves a specific system, **read the relevant file**:
+
+- `.roxlit/context/datastore.md` — DataStoreService: throttling limits, session locking, retry patterns
+- `.roxlit/context/remote-events.md` — RemoteEvent/Function: server validation, rate limiting, type checking
+- `.roxlit/context/player-lifecycle.md` — PlayerAdded, CharacterAdded, respawn, death handling
+- `.roxlit/context/workspace-physics.md` — Parts, CFrame operations, raycasting, collision groups
+- `.roxlit/context/replication.md` — What replicates, FilteringEnabled, client vs server
+- `.roxlit/context/services-reference.md` — Service properties, enums, valid ranges
+
+Read `.roxlit/context/index.md` for an overview of all available packs.
+
+## Roxlit Launcher
 
 This project was set up with Roxlit. The Roxlit launcher manages Rojo and RbxSync processes automatically.
 

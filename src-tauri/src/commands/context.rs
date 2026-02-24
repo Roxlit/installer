@@ -38,10 +38,29 @@ pub fn generate_context(project_path: &str, ai_tool: &str, project_name: &str) -
         }
     }
 
+    // Write context packs to .roxlit/context/
+    write_context_packs(root)?;
+
     // Configure MCP if the binary is available
     if mcp_available {
         configure_mcp(root, ai_tool)?;
     }
+
+    Ok(())
+}
+
+/// Writes curated Roblox documentation packs to `.roxlit/context/`.
+fn write_context_packs(project_root: &Path) -> Result<()> {
+    let context_dir = project_root.join(".roxlit").join("context");
+    fs::create_dir_all(&context_dir)?;
+
+    fs::write(context_dir.join("index.md"), templates::context_packs::index())?;
+    fs::write(context_dir.join("datastore.md"), templates::context_packs::datastore())?;
+    fs::write(context_dir.join("remote-events.md"), templates::context_packs::remote_events())?;
+    fs::write(context_dir.join("player-lifecycle.md"), templates::context_packs::player_lifecycle())?;
+    fs::write(context_dir.join("workspace-physics.md"), templates::context_packs::workspace_physics())?;
+    fs::write(context_dir.join("replication.md"), templates::context_packs::replication())?;
+    fs::write(context_dir.join("services-reference.md"), templates::context_packs::services_reference())?;
 
     Ok(())
 }

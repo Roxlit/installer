@@ -46,7 +46,7 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
     // RbxSync ignore file
     fs::write(
         root.join(".rbxsyncignore"),
-        ".git/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\n",
+        ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\n",
     )?;
 
     Ok(())
