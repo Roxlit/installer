@@ -45,7 +45,7 @@ export function Installing({ events, error, onInstall }: InstallingProps) {
 
   return (
     <motion.div
-      className="flex flex-1 flex-col px-8 py-6"
+      className="flex min-h-0 flex-1 flex-col px-8 py-6"
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: -20 }}
@@ -56,7 +56,7 @@ export function Installing({ events, error, onInstall }: InstallingProps) {
         This will only take a moment. Please don't close this window.
       </p>
 
-      <div className="mt-6 flex-1 space-y-2 overflow-y-auto">
+      <div className="mt-6 min-h-0 flex-1 space-y-2 overflow-y-auto">
         {displayEvents.map((event, i) => (
           <motion.div
             key={i}
@@ -108,7 +108,7 @@ export function Installing({ events, error, onInstall }: InstallingProps) {
       )}
 
       {/* Progress bar */}
-      <div className="mt-4 pt-4">
+      <div className="mt-4 shrink-0 pt-4">
         <div className="mb-2 flex items-center justify-between text-[11px] text-zinc-500">
           <span>
             {completedSteps} of {totalSteps} steps
