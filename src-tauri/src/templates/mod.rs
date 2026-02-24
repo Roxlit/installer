@@ -95,6 +95,16 @@ This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync
 - **RbxSync**: Syncs ALL instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files)
 - Both run simultaneously — Rojo handles scripts, RbxSync handles everything else
 
+### IMPORTANT: Activating the RbxSync Plugin
+
+The RbxSync plugin must be activated **once per Studio session**:
+1. Open Roblox Studio
+2. Go to the Plugins tab
+3. Find the RbxSync plugin and click "Sync" or "Connect"
+4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically)
+
+If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
+
 ### MCP Tools Available
 
 The RbxSync MCP server is configured and provides these tools:
@@ -124,6 +134,16 @@ This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync
 - **Rojo**: Syncs `src/` scripts to the Roblox DataModel (one-directional: filesystem → Studio)
 - **RbxSync**: Syncs ALL instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files)
 - Both run simultaneously — Rojo handles scripts, RbxSync handles everything else
+
+### IMPORTANT: Activating the RbxSync Plugin
+
+The RbxSync plugin must be activated **once per Studio session**:
+1. Open Roblox Studio
+2. Go to the Plugins tab
+3. Find the RbxSync plugin and click "Sync" or "Connect"
+4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically)
+
+If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
 
 ### Working with Instances
 
