@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import roxlitIcon from "@/assets/icon.png";
 
 interface IconProps {
   className?: string;
@@ -46,24 +47,6 @@ export function RobloxStudioIcon({ className }: IconProps) {
 
 export function RoxlitIcon({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 128 128" fill="none" className={cn("h-5 w-5", className)} xmlns="http://www.w3.org/2000/svg">
-      {/* Rounded square background */}
-      <rect width="128" height="128" rx="24" fill="currentColor" opacity="0.95" />
-      {/* Grid lines */}
-      <g stroke="currentColor" strokeWidth="1" opacity="0.2">
-        {[20, 36, 52, 68, 84, 100, 116].map(x => (
-          <line key={`v${x}`} x1={x} y1="0" x2={x} y2="128" />
-        ))}
-        {[20, 36, 52, 68, 84, 100, 116].map(y => (
-          <line key={`h${y}`} x1="0" y1={y} x2="128" y2={y} />
-        ))}
-      </g>
-      {/* Left brace { */}
-      <path d="M38 28 C38 28, 28 28, 28 40 L28 54 C28 54, 28 64, 18 64 C28 64, 28 74, 28 74 L28 88 C28 100, 38 100, 38 100" stroke="white" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      {/* Right brace } */}
-      <path d="M90 28 C90 28, 100 28, 100 40 L100 54 C100 54, 100 64, 110 64 C100 64, 100 74, 100 74 L100 88 C100 100, 90 100, 90 100" stroke="white" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      {/* R lettermark */}
-      <text x="64" y="72" textAnchor="middle" dominantBaseline="central" fill="white" fontSize="40" fontWeight="700" fontFamily="system-ui, -apple-system, sans-serif">R</text>
-    </svg>
+    <img src={roxlitIcon} alt="Roxlit" className={cn("h-5 w-5 rounded", className)} />
   );
 }
