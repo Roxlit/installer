@@ -22,6 +22,7 @@ interface InstallerState {
 }
 
 type Action =
+  | { type: "RESET" }
   | { type: "SET_STEP"; step: WizardStep }
   | { type: "SET_AI_TOOL"; tool: AiTool }
   | { type: "SET_PROJECT_NAME"; name: string }
@@ -48,6 +49,8 @@ const initialState: InstallerState = {
 
 function reducer(state: InstallerState, action: Action): InstallerState {
   switch (action.type) {
+    case "RESET":
+      return initialState;
     case "SET_STEP":
       return { ...state, step: action.step };
     case "SET_AI_TOOL":
@@ -81,6 +84,10 @@ function reducer(state: InstallerState, action: Action): InstallerState {
 
 export function useInstaller() {
   const [state, dispatch] = useReducer(reducer, initialState);
+
+  const reset = useCallback(() => {
+    dispatch({ type: "RESET" });
+  }, []);
 
   const goToStep = useCallback((step: WizardStep) => {
     dispatch({ type: "SET_STEP", step });
@@ -161,6 +168,7 @@ export function useInstaller() {
   return {
     ...state,
     projectFullPath,
+    reset,
     goToStep,
     setAiTool,
     setProjectName,

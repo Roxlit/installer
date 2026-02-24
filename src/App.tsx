@@ -53,7 +53,10 @@ export default function App() {
     }, 300);
   };
 
-  const handleNewProject = () => {
+  const handleNewProject = async () => {
+    // Stop running servers before switching to installer
+    await launcher.stopAll();
+    installer.reset();
     setMode("installer");
   };
 

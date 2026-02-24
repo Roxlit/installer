@@ -101,11 +101,10 @@ The RbxSync plugin must be activated **once per Studio session**:
 1. If this is the first time after installation, **restart Roblox Studio** so it loads the new plugin
 2. Go to the Plugins tab
 3. Find the RbxSync plugin and click "Sync" or "Connect"
-4. The plugin will ask for the project path — enter the full path to the project directory
-5. The plugin connects to `rbxsync serve` (which Roxlit starts automatically)
+4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically in the project directory)
 
 If the user reports that the RbxSync plugin doesn't appear, they need to restart Studio. Plugins are only loaded when Studio starts.
-If the user reports that instance sync isn't working, remind them to activate the plugin in Studio and verify the project path is correct. This is required every time Studio is opened.
+If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
 
 ### MCP Tools Available
 
@@ -143,11 +142,10 @@ The RbxSync plugin must be activated **once per Studio session**:
 1. If this is the first time after installation, **restart Roblox Studio** so it loads the new plugin
 2. Go to the Plugins tab
 3. Find the RbxSync plugin and click "Sync" or "Connect"
-4. The plugin will ask for the project path — enter the full path to the project directory
-5. The plugin connects to `rbxsync serve` (which Roxlit starts automatically)
+4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically in the project directory)
 
 If the user reports that the RbxSync plugin doesn't appear, they need to restart Studio. Plugins are only loaded when Studio starts.
-If the user reports that instance sync isn't working, remind them to activate the plugin in Studio and verify the project path is correct. This is required every time Studio is opened.
+If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
 
 ### Working with Instances
 

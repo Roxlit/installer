@@ -377,6 +377,9 @@ export function useLauncher() {
     const project = projectRef.current;
     if (!project) return;
 
+    // Stop any running servers first (silently)
+    await stopAll();
+
     // Start rojo and rbxsync in parallel
     await Promise.all([startRojo(), startRbxSync()]);
 
@@ -389,7 +392,7 @@ export function useLauncher() {
     } catch {
       // Editor open failure is non-critical
     }
-  }, [startRojo, startRbxSync]);
+  }, [startRojo, startRbxSync, stopAll]);
 
   const openEditor = useCallback(async () => {
     const project = projectRef.current;
