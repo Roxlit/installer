@@ -141,7 +141,7 @@ export function Launcher({
 
   return (
     <motion.div
-      className="flex flex-1 flex-col px-6 py-4"
+      className="flex min-h-0 flex-1 flex-col px-6 py-4"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
@@ -235,7 +235,7 @@ export function Launcher({
       </div>
 
       {/* Bottom bar */}
-      <div className="mt-3 flex items-center justify-between">
+      <div className="mt-3 flex shrink-0 items-center justify-between">
         <button
           onClick={onNewProject}
           className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
