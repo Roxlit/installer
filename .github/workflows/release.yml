@@ -47,9 +47,14 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           cd src-tauri
-          $content = Get-Content Cargo.toml -Raw
-          $content = $content -replace '(?<=\[package\][\s\S]*?)version = ".*?"', "version = `"$env:VERSION`""
-          Set-Content Cargo.toml $content -NoNewline
+          $lines = Get-Content Cargo.toml
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^version = "' ) {
+              $lines[$i] = "version = `"$env:VERSION`""
+              break
+            }
+          }
+          $lines | Set-Content Cargo.toml
         shell: pwsh
 
       - name: Update version in tauri.conf.json
