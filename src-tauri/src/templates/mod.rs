@@ -98,11 +98,12 @@ This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync
 ### IMPORTANT: Activating the RbxSync Plugin
 
 The RbxSync plugin must be activated **once per Studio session**:
-1. Open Roblox Studio
+1. If this is the first time after installation, **restart Roblox Studio** so it loads the new plugin
 2. Go to the Plugins tab
 3. Find the RbxSync plugin and click "Sync" or "Connect"
 4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically)
 
+If the user reports that the RbxSync plugin doesn't appear, they need to restart Studio. Plugins are only loaded when Studio starts.
 If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
 
 ### MCP Tools Available
@@ -138,11 +139,12 @@ This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync
 ### IMPORTANT: Activating the RbxSync Plugin
 
 The RbxSync plugin must be activated **once per Studio session**:
-1. Open Roblox Studio
+1. If this is the first time after installation, **restart Roblox Studio** so it loads the new plugin
 2. Go to the Plugins tab
 3. Find the RbxSync plugin and click "Sync" or "Connect"
 4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically)
 
+If the user reports that the RbxSync plugin doesn't appear, they need to restart Studio. Plugins are only loaded when Studio starts.
 If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
 
 ### Working with Instances
