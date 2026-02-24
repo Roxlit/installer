@@ -6,8 +6,3 @@
   IfFileExists "$PROFILE\.roxlit\*.*" 0 +2
     RMDir /r "$PROFILE\.roxlit"
 !macroend
-
-!macro NSIS_HOOK_POSTUNINSTALL
-  ; Quit immediately to prevent the installer from reopening
-  Quit
-!macroend
