@@ -91,6 +91,16 @@ pub async fn start_rojo(
 
     let rojo = rojo_bin_path();
     let project_path = expand_tilde(&project_path);
+
+    // Ensure project directories exist (user may have deleted src/)
+    let project_dir = std::path::Path::new(&project_path);
+    for subdir in &["src/server", "src/client", "src/shared"] {
+        let dir = project_dir.join(subdir);
+        if !dir.exists() {
+            let _ = std::fs::create_dir_all(&dir);
+        }
+    }
+
     let mut cmd = tokio::process::Command::new(&rojo);
     cmd.arg("serve")
         .current_dir(&project_path)
