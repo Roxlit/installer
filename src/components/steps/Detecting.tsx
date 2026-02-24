@@ -76,7 +76,7 @@ export function Detecting({
       exit={{ opacity: 0, x: -20 }}
       transition={{ duration: 0.3 }}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-hidden">
         <h2 className="text-lg font-semibold">Checking your system</h2>
         <p className="mt-1 text-sm text-zinc-400">
           Detecting installed tools and configuration.

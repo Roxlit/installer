@@ -1,5 +1,9 @@
 use serde::Serialize;
 use std::path::PathBuf;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 use tokio::process::Command;
 
 /// Results from scanning the user's system for required tools.
@@ -78,14 +82,22 @@ async fn detect_cli_tool(name: &str) -> (bool, Option<String>) {
     let bin_path = dirs::home_dir()
         .map(|h| h.join(".aftman").join("bin").join(name));
 
-    let result = Command::new(name).arg("--version").output().await;
+    let mut cmd = Command::new(name);
+    cmd.arg("--version");
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let result = cmd.output().await;
 
     // If the tool isn't in PATH, try the aftman bin directory
     let result = match result {
         Ok(output) if output.status.success() => Ok(output),
         _ => {
             if let Some(ref path) = bin_path {
-                Command::new(path).arg("--version").output().await
+                let mut cmd = Command::new(path);
+                cmd.arg("--version");
+                #[cfg(target_os = "windows")]
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                cmd.output().await
             } else {
                 return (false, None);
             }
