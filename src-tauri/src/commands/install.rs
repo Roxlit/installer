@@ -45,6 +45,7 @@ pub struct InstallConfig {
     pub project_name: String,
     pub skip_aftman: bool,
     pub skip_rojo: bool,
+    pub skip_rbxsync: bool,
     pub plugins_path: Option<String>,
 }
 
@@ -162,7 +163,40 @@ pub async fn run_installation(
         }
     }
 
-    // Step 4: Create project structure
+    // Step 4: Install RbxSync (if needed) — non-critical, warn on failure
+    if !config.skip_rbxsync {
+        step_index += 1;
+        on_event
+            .send(SetupEvent::StepStarted {
+                step: "rbxsync".into(),
+                description: "Installing RbxSync (instance sync)".into(),
+                step_index,
+                total_steps,
+            })
+            .map_err(|e| InstallerError::Custom(e.to_string()))?;
+
+        match install_rbxsync(&config, &on_event).await {
+            Ok(()) => {
+                on_event
+                    .send(SetupEvent::StepCompleted {
+                        step: "rbxsync".into(),
+                        detail: "RbxSync installed successfully".into(),
+                    })
+                    .map_err(|e| InstallerError::Custom(e.to_string()))?;
+            }
+            Err(e) => {
+                // RbxSync is non-critical — warn but continue
+                on_event
+                    .send(SetupEvent::StepWarning {
+                        step: "rbxsync".into(),
+                        message: format!("Could not install RbxSync: {e}. You can install it manually later."),
+                    })
+                    .map_err(|e| InstallerError::Custom(e.to_string()))?;
+            }
+        }
+    }
+
+    // Step 5: Create project structure
     step_index += 1;
     on_event
         .send(SetupEvent::StepStarted {
@@ -181,7 +215,7 @@ pub async fn run_installation(
         })
         .map_err(|e| InstallerError::Custom(e.to_string()))?;
 
-    // Step 5: Generate AI context files
+    // Step 6: Generate AI context files + MCP config
     step_index += 1;
     on_event
         .send(SetupEvent::StepStarted {
@@ -217,6 +251,9 @@ fn calculate_total_steps(config: &InstallConfig) -> usize {
         steps += 1;
     }
     if !config.skip_rojo {
+        steps += 1;
+    }
+    if !config.skip_rbxsync {
         steps += 1;
     }
     steps
@@ -442,6 +479,148 @@ async fn install_rojo(config: &InstallConfig, on_event: &Channel<SetupEvent>) ->
             step: "rojo".into(),
             progress: 1.0,
             detail: "Rojo installed".into(),
+        })
+        .map_err(|e| InstallerError::Custom(e.to_string()))?;
+
+    Ok(())
+}
+
+const RBXSYNC_REPO: &str = "Smokestack-Games/rbxsync";
+const RBXSYNC_VERSION: &str = "1.3.0";
+
+/// Downloads a binary from a URL to the target path with progress reporting.
+async fn download_binary(url: &str, target_path: &PathBuf) -> Result<()> {
+    if let Some(parent) = target_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let response = reqwest::get(url).await?;
+    if !response.status().is_success() {
+        return Err(InstallerError::Custom(format!(
+            "Failed to download: HTTP {} from {url}",
+            response.status()
+        )));
+    }
+
+    let bytes = response.bytes().await?;
+    tokio::fs::write(target_path, &bytes).await?;
+
+    // Make executable on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(target_path, std::fs::Permissions::from_mode(0o755)).await?;
+    }
+
+    Ok(())
+}
+
+/// Returns the RbxSync CLI asset name for the current platform.
+fn rbxsync_asset_name() -> Option<&'static str> {
+    if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+        Some("rbxsync-windows-x86_64.exe")
+    } else if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        Some("rbxsync-macos-aarch64")
+    } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
+        Some("rbxsync-macos-x86_64")
+    } else {
+        None // Linux or unsupported arch
+    }
+}
+
+/// Returns the RbxSync MCP server asset name (only available on macOS ARM).
+fn rbxsync_mcp_asset_name() -> Option<&'static str> {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        Some("rbxsync-mcp-macos-arm64")
+    } else {
+        None
+    }
+}
+
+/// Downloads and installs RbxSync CLI, Studio plugin, and MCP server (if available).
+async fn install_rbxsync(config: &InstallConfig, on_event: &Channel<SetupEvent>) -> Result<()> {
+    let asset_name = rbxsync_asset_name().ok_or_else(|| {
+        InstallerError::Custom("RbxSync is not available for this platform".into())
+    })?;
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
+    let bin_dir = home.join(".roxlit").join("bin");
+
+    // 1. Download RbxSync CLI
+    on_event
+        .send(SetupEvent::StepProgress {
+            step: "rbxsync".into(),
+            progress: 0.1,
+            detail: "Downloading RbxSync CLI...".into(),
+        })
+        .map_err(|e| InstallerError::Custom(e.to_string()))?;
+
+    let cli_url = format!(
+        "https://github.com/{RBXSYNC_REPO}/releases/download/v{RBXSYNC_VERSION}/{asset_name}"
+    );
+    let cli_bin_name = if cfg!(target_os = "windows") {
+        "rbxsync.exe"
+    } else {
+        "rbxsync"
+    };
+    let cli_path = bin_dir.join(cli_bin_name);
+    download_binary(&cli_url, &cli_path).await?;
+
+    // 2. Download RbxSync Studio plugin
+    on_event
+        .send(SetupEvent::StepProgress {
+            step: "rbxsync".into(),
+            progress: 0.5,
+            detail: "Installing RbxSync Studio plugin...".into(),
+        })
+        .map_err(|e| InstallerError::Custom(e.to_string()))?;
+
+    let plugin_url = format!(
+        "https://github.com/{RBXSYNC_REPO}/releases/download/v{RBXSYNC_VERSION}/RbxSync.rbxm"
+    );
+
+    let plugins_path = match &config.plugins_path {
+        Some(path) => PathBuf::from(path),
+        None => {
+            if cfg!(target_os = "windows") {
+                dirs::data_local_dir()
+                    .ok_or_else(|| InstallerError::Custom("Cannot find AppData".into()))?
+                    .join("Roblox")
+                    .join("Plugins")
+            } else if cfg!(target_os = "macos") {
+                home.join("Library").join("Roblox").join("Plugins")
+            } else {
+                return Ok(()); // Linux — no plugins
+            }
+        }
+    };
+    std::fs::create_dir_all(&plugins_path)?;
+    let plugin_path = plugins_path.join("RbxSync.rbxm");
+    download_binary(&plugin_url, &plugin_path).await?;
+
+    // 3. Download MCP server (macOS ARM only)
+    if let Some(mcp_asset) = rbxsync_mcp_asset_name() {
+        on_event
+            .send(SetupEvent::StepProgress {
+                step: "rbxsync".into(),
+                progress: 0.8,
+                detail: "Installing RbxSync MCP server...".into(),
+            })
+            .map_err(|e| InstallerError::Custom(e.to_string()))?;
+
+        let mcp_url = format!(
+            "https://github.com/{RBXSYNC_REPO}/releases/download/v{RBXSYNC_VERSION}/{mcp_asset}"
+        );
+        let mcp_path = bin_dir.join("rbxsync-mcp");
+        download_binary(&mcp_url, &mcp_path).await?;
+    }
+
+    on_event
+        .send(SetupEvent::StepProgress {
+            step: "rbxsync".into(),
+            progress: 1.0,
+            detail: "RbxSync installed".into(),
         })
         .map_err(|e| InstallerError::Custom(e.to_string()))?;
 

@@ -17,6 +17,8 @@ pub struct DetectionResult {
     pub rojo_version: Option<String>,
     pub aftman_installed: bool,
     pub aftman_version: Option<String>,
+    pub rbxsync_installed: bool,
+    pub rbxsync_version: Option<String>,
 }
 
 /// Scans the system for Roblox Studio, Rojo, and Aftman.
@@ -27,6 +29,7 @@ pub async fn detect_environment() -> crate::error::Result<DetectionResult> {
     let (studio_installed, studio_plugins_path) = detect_studio(&os);
     let (rojo_installed, rojo_version) = detect_cli_tool("rojo").await;
     let (aftman_installed, aftman_version) = detect_cli_tool("aftman").await;
+    let (rbxsync_installed, rbxsync_version) = detect_rbxsync(&os).await;
 
     Ok(DetectionResult {
         os,
@@ -36,6 +39,8 @@ pub async fn detect_environment() -> crate::error::Result<DetectionResult> {
         rojo_version,
         aftman_installed,
         aftman_version,
+        rbxsync_installed,
+        rbxsync_version,
     })
 }
 
@@ -105,6 +110,58 @@ async fn detect_cli_tool(name: &str) -> (bool, Option<String>) {
     };
 
     match result {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .to_string();
+            (true, Some(version))
+        }
+        _ => (false, None),
+    }
+}
+
+/// Checks for RbxSync in ~/.roxlit/bin/ and PATH.
+/// Skips on Linux where no binaries are available.
+async fn detect_rbxsync(os: &str) -> (bool, Option<String>) {
+    if os == "linux" {
+        return (false, None);
+    }
+
+    let roxlit_bin = dirs::home_dir().map(|h| {
+        let name = if cfg!(target_os = "windows") {
+            "rbxsync.exe"
+        } else {
+            "rbxsync"
+        };
+        h.join(".roxlit").join("bin").join(name)
+    });
+
+    // Try ~/.roxlit/bin/rbxsync first
+    if let Some(ref path) = roxlit_bin {
+        if path.exists() {
+            let mut cmd = Command::new(path);
+            cmd.arg("version");
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000);
+            if let Ok(output) = cmd.output().await {
+                if output.status.success() {
+                    let version = String::from_utf8_lossy(&output.stdout)
+                        .trim()
+                        .to_string();
+                    return (true, Some(version));
+                }
+            }
+            // Binary exists but version failed — still counts as installed
+            return (true, None);
+        }
+    }
+
+    // Fallback to PATH
+    let mut cmd = Command::new("rbxsync");
+    cmd.arg("version");
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+    match cmd.output().await {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout)
                 .trim()

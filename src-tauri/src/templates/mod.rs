@@ -82,7 +82,58 @@ return Shared
 
 /// Returns the AI context file content with Roblox/Luau development instructions.
 /// This is the same content regardless of AI tool — only the filename changes.
-pub fn ai_context(project_name: &str) -> String {
+pub fn ai_context(project_name: &str, mcp_available: bool) -> String {
+    let rbxsync_section = if mcp_available {
+        r#"
+## RbxSync (Instance Sync + MCP)
+
+This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync provides **bidirectional sync for all instances** (Parts, GUIs, Models, etc.) and an **MCP server** for AI tool integration.
+
+### How it works
+
+- **Rojo**: Syncs `src/` scripts to the Roblox DataModel (one-directional: filesystem → Studio)
+- **RbxSync**: Syncs ALL instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files)
+- Both run simultaneously — Rojo handles scripts, RbxSync handles everything else
+
+### MCP Tools Available
+
+The RbxSync MCP server is configured and provides these tools:
+- **get_instance**: Read properties of any instance in Studio
+- **set_property**: Modify instance properties (Position, Size, Color, etc.)
+- **create_instance**: Create new instances (Parts, GUIs, etc.)
+- **delete_instance**: Remove instances from the DataModel
+- **get_children**: List child instances of a parent
+- **get_descendants**: Get all descendants of an instance
+
+### Working with Instances
+
+When the user asks you to modify Parts, GUIs, or other non-script objects:
+1. Use the RbxSync MCP tools to read/modify instances directly in Studio
+2. Changes sync bidirectionally — modifications in Studio also sync to the filesystem
+3. Instance files are stored as `.rbxjson` in the project directory
+
+"#
+    } else {
+        r#"
+## RbxSync (Instance Sync)
+
+This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync provides **bidirectional sync for all instances** (Parts, GUIs, Models, etc.).
+
+### How it works
+
+- **Rojo**: Syncs `src/` scripts to the Roblox DataModel (one-directional: filesystem → Studio)
+- **RbxSync**: Syncs ALL instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files)
+- Both run simultaneously — Rojo handles scripts, RbxSync handles everything else
+
+### Working with Instances
+
+- Instance properties are stored as `.rbxjson` files in the project directory
+- You can read and modify these files to change Part positions, GUI layouts, etc.
+- Changes sync automatically to Studio when RbxSync is running
+
+"#
+    };
+
     format!(
         r#"# {project_name}
 
@@ -92,6 +143,7 @@ Roblox game project using Rojo for file syncing. Write Luau code in `src/` and R
 
 - **Language**: Luau (Roblox's typed Lua dialect)
 - **Sync tool**: Rojo (filesystem <-> Roblox DataModel)
+- **Instance sync**: RbxSync (bidirectional sync for Parts, GUIs, etc.)
 - **Type checking**: Strict mode (`--!strict`)
 
 ## Project Structure
@@ -196,6 +248,6 @@ end
 2. **Filtering Enabled**: Clients cannot directly modify the server's state. Use RemoteEvents/RemoteFunctions for communication.
 3. **Player lifecycle**: Use `Players.PlayerAdded` for setup and `Players.PlayerRemoving` for cleanup/saving.
 4. **Testing**: Use Studio's "Run" mode (server + client) for networking tests, not "Play Solo".
-"#
+{rbxsync_section}"#
     )
 }

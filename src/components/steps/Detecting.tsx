@@ -60,12 +60,22 @@ export function Detecting({
             ? detection.rojoVersion ?? "Installed"
             : "Will be installed",
         },
+        {
+          label: "RbxSync",
+          status: detection.os === "linux" ? "fail" as const : "pass" as const,
+          detail: detection.os === "linux"
+            ? "Not available on Linux"
+            : detection.rbxsyncInstalled
+              ? detection.rbxsyncVersion ?? "Installed"
+              : "Will be installed",
+        },
       ]
     : [
         { label: "Operating System", status: "pending" as const },
         { label: "Roblox Studio", status: "pending" as const },
         { label: "Aftman", status: "pending" as const },
         { label: "Rojo", status: "pending" as const },
+        { label: "RbxSync", status: "pending" as const },
       ];
 
   return (

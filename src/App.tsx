@@ -12,23 +12,27 @@ import { Complete } from "./components/steps/Complete";
 import { Launcher } from "./components/launcher/Launcher";
 import { useInstaller } from "./hooks/useInstaller";
 import { useLauncher } from "./hooks/useLauncher";
+import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { TOOL_OPTIONS } from "./lib/types";
 import type { AppMode, ProjectEntry, RoxlitConfig } from "./lib/types";
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>("loading");
+  const [config, setConfig] = useState<RoxlitConfig | null>(null);
   const installer = useInstaller();
   const launcher = useLauncher();
+  const { update, dismissUpdate } = useUpdateChecker(config);
 
   // Boot: check for existing config
   useEffect(() => {
     invoke<RoxlitConfig | null>("load_config")
-      .then((config) => {
-        if (config && config.projects.length > 0) {
+      .then((loadedConfig) => {
+        if (loadedConfig && loadedConfig.projects.length > 0) {
+          setConfig(loadedConfig);
           const active =
-            config.projects.find(
-              (p) => p.path === config.lastActiveProject
-            ) ?? config.projects[0];
+            loadedConfig.projects.find(
+              (p) => p.path === loadedConfig.lastActiveProject
+            ) ?? loadedConfig.projects[0];
           launcher.setProject(active);
           setMode("launcher");
         } else {
@@ -80,12 +84,15 @@ export default function App() {
           aiTool={launcher.project.aiTool}
           rojoStatus={launcher.rojoStatus}
           rojoPort={launcher.rojoPort}
-          rojoLogs={launcher.rojoLogs}
+          rbxsyncStatus={launcher.rbxsyncStatus}
+          logs={launcher.logs}
           error={launcher.error}
+          update={update}
           onStartDevelopment={launcher.startDevelopment}
-          onStopRojo={launcher.stopRojo}
+          onStopAll={launcher.stopAll}
           onOpenEditor={launcher.openEditor}
           onNewProject={handleNewProject}
+          onDismissUpdate={dismissUpdate}
         />
       </div>
     );

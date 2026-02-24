@@ -12,8 +12,9 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { LogTerminal } from "./LogTerminal";
+import { UpdateBanner } from "./UpdateBanner";
 import { TOOL_OPTIONS } from "@/lib/types";
-import type { RojoStatus } from "@/lib/types";
+import type { RojoStatus, RbxSyncStatus, UpdateInfo } from "@/lib/types";
 
 async function openExternal(url: string) {
   try {
@@ -33,25 +34,29 @@ interface LauncherProps {
   aiTool: string;
   rojoStatus: RojoStatus;
   rojoPort: number | null;
-  rojoLogs: string[];
+  rbxsyncStatus: RbxSyncStatus;
+  logs: string[];
   error: string | null;
+  update: UpdateInfo | null;
   onStartDevelopment: () => void;
-  onStopRojo: () => void;
+  onStopAll: () => void;
   onOpenEditor: () => void;
   onNewProject: () => void;
+  onDismissUpdate: () => void;
 }
 
-function StatusDot({ status }: { status: RojoStatus }) {
-  const colors: Record<RojoStatus, string> = {
+function StatusDot({ status }: { status: RojoStatus | RbxSyncStatus }) {
+  const colors: Record<string, string> = {
     stopped: "bg-zinc-500",
     starting: "bg-yellow-400 animate-pulse",
     running: "bg-emerald-400",
     error: "bg-red-400",
+    unavailable: "bg-zinc-700",
   };
-  return <div className={`h-2 w-2 rounded-full ${colors[status]}`} />;
+  return <div className={`h-2 w-2 rounded-full ${colors[status] ?? "bg-zinc-500"}`} />;
 }
 
-function StatusText({
+function RojoStatusText({
   status,
   port,
 }: {
@@ -85,18 +90,36 @@ function StatusText({
   }
 }
 
+function RbxSyncStatusText({ status }: { status: RbxSyncStatus }) {
+  switch (status) {
+    case "stopped":
+      return <span className="text-zinc-500">RbxSync stopped</span>;
+    case "starting":
+      return <span className="text-yellow-400">Starting RbxSync...</span>;
+    case "running":
+      return <span className="text-blue-400">RbxSync running</span>;
+    case "error":
+      return <span className="text-red-400">RbxSync error</span>;
+    case "unavailable":
+      return <span className="text-zinc-600">RbxSync not installed</span>;
+  }
+}
+
 export function Launcher({
   projectName,
   projectPath,
   aiTool,
   rojoStatus,
   rojoPort,
-  rojoLogs,
+  rbxsyncStatus,
+  logs,
   error,
+  update,
   onStartDevelopment,
-  onStopRojo,
+  onStopAll,
   onOpenEditor,
   onNewProject,
+  onDismissUpdate,
 }: LauncherProps) {
   const [editorLoading, setEditorLoading] = useState(false);
   const toolName =
@@ -152,6 +175,13 @@ export function Launcher({
         </button>
       </div>
 
+      {/* Update banner */}
+      {update && (
+        <div className="mt-3">
+          <UpdateBanner update={update} onDismiss={onDismissUpdate} />
+        </div>
+      )}
+
       {/* Main action + status */}
       <div className="mt-5 flex items-center gap-3">
         {!isRunning ? (
@@ -164,7 +194,7 @@ export function Launcher({
           </button>
         ) : (
           <button
-            onClick={onStopRojo}
+            onClick={onStopAll}
             disabled={rojoStatus === "starting"}
             className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 py-3 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-60"
           >
@@ -173,15 +203,23 @@ export function Launcher({
             ) : (
               <Square className="h-4 w-4" />
             )}
-            {rojoStatus === "starting" ? "Starting..." : "Stop Rojo"}
+            {rojoStatus === "starting" ? "Starting..." : "Stop All"}
           </button>
         )}
       </div>
 
-      {/* Status bar */}
-      <div className="mt-3 flex items-center gap-2 text-xs">
-        <StatusDot status={rojoStatus} />
-        <StatusText status={rojoStatus} port={rojoPort} />
+      {/* Status bar — dual indicators */}
+      <div className="mt-3 flex items-center gap-4 text-xs">
+        <div className="flex items-center gap-2">
+          <StatusDot status={rojoStatus} />
+          <RojoStatusText status={rojoStatus} port={rojoPort} />
+        </div>
+        {rbxsyncStatus !== "unavailable" && (
+          <div className="flex items-center gap-2">
+            <StatusDot status={rbxsyncStatus} />
+            <RbxSyncStatusText status={rbxsyncStatus} />
+          </div>
+        )}
       </div>
 
       {/* Error display */}
@@ -193,7 +231,7 @@ export function Launcher({
 
       {/* Terminal */}
       <div className="mt-4 flex min-h-0 flex-1 flex-col">
-        <LogTerminal logs={rojoLogs} />
+        <LogTerminal logs={logs} />
       </div>
 
       {/* Bottom bar */}

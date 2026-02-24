@@ -1,6 +1,12 @@
 import { useReducer, useCallback, useRef } from "react";
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type { ProjectEntry, RojoEvent, RojoStatus } from "@/lib/types";
+import type {
+  ProjectEntry,
+  RojoEvent,
+  RojoStatus,
+  RbxSyncEvent,
+  RbxSyncStatus,
+} from "@/lib/types";
 
 const MAX_LOGS = 500;
 const MAX_AUTO_RESTARTS = 3;
@@ -11,7 +17,8 @@ interface LauncherState {
   project: ProjectEntry | null;
   rojoStatus: RojoStatus;
   rojoPort: number | null;
-  rojoLogs: string[];
+  rbxsyncStatus: RbxSyncStatus;
+  logs: string[];
   error: string | null;
 }
 
@@ -22,13 +29,20 @@ type Action =
   | { type: "ROJO_OUTPUT"; line: string; stream: string }
   | { type: "ROJO_STOPPED"; code: number | null }
   | { type: "ROJO_ERROR"; message: string }
+  | { type: "RBXSYNC_STARTING" }
+  | { type: "RBXSYNC_STARTED" }
+  | { type: "RBXSYNC_OUTPUT"; line: string; stream: string }
+  | { type: "RBXSYNC_STOPPED"; code: number | null }
+  | { type: "RBXSYNC_ERROR"; message: string }
+  | { type: "RBXSYNC_UNAVAILABLE" }
   | { type: "CLEAR_LOGS" };
 
 const initialState: LauncherState = {
   project: null,
   rojoStatus: "stopped",
   rojoPort: null,
-  rojoLogs: [],
+  rbxsyncStatus: "stopped",
+  logs: [],
   error: null,
 };
 
@@ -41,25 +55,47 @@ function reducer(state: LauncherState, action: Action): LauncherState {
         ...state,
         rojoStatus: "starting",
         rojoPort: null,
-        rojoLogs: action.keepLogs ? state.rojoLogs : [],
+        logs: action.keepLogs ? state.logs : [],
         error: null,
       };
     case "ROJO_STARTED":
       return { ...state, rojoStatus: "running", rojoPort: action.port };
     case "ROJO_OUTPUT": {
-      const prefix = action.stream === "stderr" ? "[err] " : "";
-      const logs = [...state.rojoLogs, `${prefix}${action.line}`];
+      const prefix =
+        action.stream === "stderr" ? "[rojo] [err] " : "[rojo] ";
+      const logs = [...state.logs, `${prefix}${action.line}`];
       return {
         ...state,
-        rojoLogs: logs.length > MAX_LOGS ? logs.slice(-MAX_LOGS) : logs,
+        logs: logs.length > MAX_LOGS ? logs.slice(-MAX_LOGS) : logs,
       };
     }
     case "ROJO_STOPPED":
       return { ...state, rojoStatus: "stopped", rojoPort: null };
     case "ROJO_ERROR":
       return { ...state, rojoStatus: "error", error: action.message };
+    case "RBXSYNC_STARTING":
+      return { ...state, rbxsyncStatus: "starting" };
+    case "RBXSYNC_STARTED":
+      return { ...state, rbxsyncStatus: "running" };
+    case "RBXSYNC_OUTPUT": {
+      const prefix =
+        action.stream === "stderr"
+          ? "[rbxsync] [err] "
+          : "[rbxsync] ";
+      const logs = [...state.logs, `${prefix}${action.line}`];
+      return {
+        ...state,
+        logs: logs.length > MAX_LOGS ? logs.slice(-MAX_LOGS) : logs,
+      };
+    }
+    case "RBXSYNC_STOPPED":
+      return { ...state, rbxsyncStatus: "stopped" };
+    case "RBXSYNC_ERROR":
+      return { ...state, rbxsyncStatus: "error", error: action.message };
+    case "RBXSYNC_UNAVAILABLE":
+      return { ...state, rbxsyncStatus: "unavailable" };
     case "CLEAR_LOGS":
-      return { ...state, rojoLogs: [] };
+      return { ...state, logs: [] };
     default:
       return state;
   }
@@ -67,12 +103,21 @@ function reducer(state: LauncherState, action: Action): LauncherState {
 
 export function useLauncher() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const channelRef = useRef<Channel<RojoEvent> | null>(null);
+  const rojoChannelRef = useRef<Channel<RojoEvent> | null>(null);
+  const rbxsyncChannelRef = useRef<Channel<RbxSyncEvent> | null>(null);
   const projectRef = useRef<ProjectEntry | null>(null);
   const stopRequestedRef = useRef(false);
   const restartCountRef = useRef(0);
   const lastCrashTimeRef = useRef(0);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // RbxSync auto-restart refs
+  const rbxsyncStopRequestedRef = useRef(false);
+  const rbxsyncRestartCountRef = useRef(0);
+  const rbxsyncLastCrashTimeRef = useRef(0);
+  const rbxsyncRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // Keep projectRef in sync
   const setProject = useCallback((project: ProjectEntry) => {
@@ -80,8 +125,8 @@ export function useLauncher() {
     dispatch({ type: "SET_PROJECT", project });
   }, []);
 
-  // Shared event handler factory — used for both initial start and auto-restarts
-  function createEventHandler(): (event: RojoEvent) => void {
+  // --- Rojo event handler ---
+  function createRojoEventHandler(): (event: RojoEvent) => void {
     return (event: RojoEvent) => {
       switch (event.event) {
         case "output":
@@ -93,18 +138,16 @@ export function useLauncher() {
           break;
         case "started":
           dispatch({ type: "ROJO_STARTED", port: event.data.port });
-          // Reset crash counter after running stable for a while
           setTimeout(() => {
             restartCountRef.current = 0;
           }, RESTART_WINDOW_MS);
           break;
         case "stopped": {
-          channelRef.current = null;
+          rojoChannelRef.current = null;
           const wasRequested = stopRequestedRef.current;
           stopRequestedRef.current = false;
 
           if (!wasRequested && projectRef.current) {
-            // Unexpected crash — try auto-restart
             const now = Date.now();
             if (now - lastCrashTimeRef.current > RESTART_WINDOW_MS) {
               restartCountRef.current = 0;
@@ -123,8 +166,8 @@ export function useLauncher() {
               const projectPath = projectRef.current.path;
               restartTimerRef.current = setTimeout(() => {
                 const ch = new Channel<RojoEvent>();
-                channelRef.current = ch;
-                ch.onmessage = createEventHandler();
+                rojoChannelRef.current = ch;
+                ch.onmessage = createRojoEventHandler();
                 invoke("start_rojo", {
                   projectPath,
                   onEvent: ch,
@@ -136,9 +179,8 @@ export function useLauncher() {
                   });
                 });
               }, RESTART_DELAY_MS);
-              return; // Don't dispatch ROJO_STOPPED
+              return;
             }
-            // Max retries exhausted
             dispatch({
               type: "ROJO_OUTPUT",
               line: `Rojo crashed ${MAX_AUTO_RESTARTS} times. Click "Start Development" to try again.`,
@@ -150,7 +192,83 @@ export function useLauncher() {
         }
         case "error":
           dispatch({ type: "ROJO_ERROR", message: event.data.message });
-          channelRef.current = null;
+          rojoChannelRef.current = null;
+          break;
+      }
+    };
+  }
+
+  // --- RbxSync event handler ---
+  function createRbxSyncEventHandler(): (event: RbxSyncEvent) => void {
+    return (event: RbxSyncEvent) => {
+      switch (event.event) {
+        case "output":
+          dispatch({
+            type: "RBXSYNC_OUTPUT",
+            line: event.data.line,
+            stream: event.data.stream,
+          });
+          break;
+        case "started":
+          dispatch({ type: "RBXSYNC_STARTED" });
+          setTimeout(() => {
+            rbxsyncRestartCountRef.current = 0;
+          }, RESTART_WINDOW_MS);
+          break;
+        case "stopped": {
+          rbxsyncChannelRef.current = null;
+          const wasRequested = rbxsyncStopRequestedRef.current;
+          rbxsyncStopRequestedRef.current = false;
+
+          if (!wasRequested && projectRef.current) {
+            const now = Date.now();
+            if (
+              now - rbxsyncLastCrashTimeRef.current >
+              RESTART_WINDOW_MS
+            ) {
+              rbxsyncRestartCountRef.current = 0;
+            }
+            rbxsyncLastCrashTimeRef.current = now;
+            rbxsyncRestartCountRef.current++;
+
+            if (rbxsyncRestartCountRef.current <= MAX_AUTO_RESTARTS) {
+              dispatch({
+                type: "RBXSYNC_OUTPUT",
+                line: `RbxSync crashed (exit code ${event.data.code}). Restarting automatically (${rbxsyncRestartCountRef.current}/${MAX_AUTO_RESTARTS})...`,
+                stream: "stderr",
+              });
+              dispatch({ type: "RBXSYNC_STARTING" });
+
+              const projectPath = projectRef.current.path;
+              rbxsyncRestartTimerRef.current = setTimeout(() => {
+                const ch = new Channel<RbxSyncEvent>();
+                rbxsyncChannelRef.current = ch;
+                ch.onmessage = createRbxSyncEventHandler();
+                invoke("start_rbxsync", {
+                  projectPath,
+                  onEvent: ch,
+                }).catch((err) => {
+                  dispatch({
+                    type: "RBXSYNC_ERROR",
+                    message:
+                      err instanceof Error ? err.message : String(err),
+                  });
+                });
+              }, RESTART_DELAY_MS);
+              return;
+            }
+            dispatch({
+              type: "RBXSYNC_OUTPUT",
+              line: `RbxSync crashed ${MAX_AUTO_RESTARTS} times. Click "Start Development" to try again.`,
+              stream: "stderr",
+            });
+          }
+          dispatch({ type: "RBXSYNC_STOPPED", code: event.data.code });
+          break;
+        }
+        case "error":
+          dispatch({ type: "RBXSYNC_ERROR", message: event.data.message });
+          rbxsyncChannelRef.current = null;
           break;
       }
     };
@@ -165,8 +283,8 @@ export function useLauncher() {
     restartCountRef.current = 0;
 
     const channel = new Channel<RojoEvent>();
-    channelRef.current = channel;
-    channel.onmessage = createEventHandler();
+    rojoChannelRef.current = channel;
+    channel.onmessage = createRojoEventHandler();
 
     try {
       await invoke("start_rojo", {
@@ -181,30 +299,86 @@ export function useLauncher() {
     }
   }, []);
 
-  const stopRojo = useCallback(async () => {
+  const startRbxSync = useCallback(async () => {
+    const project = projectRef.current;
+    if (!project) return;
+
+    dispatch({ type: "RBXSYNC_STARTING" });
+    rbxsyncStopRequestedRef.current = false;
+    rbxsyncRestartCountRef.current = 0;
+
+    const channel = new Channel<RbxSyncEvent>();
+    rbxsyncChannelRef.current = channel;
+    channel.onmessage = createRbxSyncEventHandler();
+
+    try {
+      await invoke("start_rbxsync", {
+        projectPath: project.path,
+        onEvent: channel,
+      });
+    } catch (err) {
+      // If rbxsync binary not found, mark as unavailable
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes("not found") ||
+        msg.includes("No such file") ||
+        msg.includes("os error 2")
+      ) {
+        dispatch({ type: "RBXSYNC_UNAVAILABLE" });
+      } else {
+        dispatch({ type: "RBXSYNC_ERROR", message: msg });
+      }
+    }
+  }, []);
+
+  const stopAll = useCallback(async () => {
     stopRequestedRef.current = true;
+    rbxsyncStopRequestedRef.current = true;
+
     if (restartTimerRef.current) {
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = null;
     }
-    try {
-      await invoke("stop_rojo");
-      dispatch({ type: "ROJO_STOPPED", code: null });
-    } catch (err) {
-      dispatch({
-        type: "ROJO_ERROR",
-        message: err instanceof Error ? err.message : String(err),
-      });
+    if (rbxsyncRestartTimerRef.current) {
+      clearTimeout(rbxsyncRestartTimerRef.current);
+      rbxsyncRestartTimerRef.current = null;
     }
-    channelRef.current = null;
-  }, []);
+
+    // Stop both in parallel
+    const results = await Promise.allSettled([
+      invoke("stop_rojo"),
+      invoke("stop_rbxsync"),
+    ]);
+
+    dispatch({ type: "ROJO_STOPPED", code: null });
+    if (state.rbxsyncStatus !== "unavailable") {
+      dispatch({ type: "RBXSYNC_STOPPED", code: null });
+    }
+
+    rojoChannelRef.current = null;
+    rbxsyncChannelRef.current = null;
+
+    // Report errors if both failed
+    for (const result of results) {
+      if (result.status === "rejected") {
+        const msg =
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason);
+        // Ignore "not running" errors
+        if (!msg.includes("not running") && !msg.includes("already")) {
+          dispatch({ type: "ROJO_ERROR", message: msg });
+        }
+      }
+    }
+  }, [state.rbxsyncStatus]);
 
   const startDevelopment = useCallback(async () => {
     const project = projectRef.current;
     if (!project) return;
 
-    // Start rojo first
-    await startRojo();
+    // Start rojo and rbxsync in parallel
+    await Promise.all([startRojo(), startRbxSync()]);
 
     // Then open editor
     try {
@@ -215,7 +389,7 @@ export function useLauncher() {
     } catch {
       // Editor open failure is non-critical
     }
-  }, [startRojo]);
+  }, [startRojo, startRbxSync]);
 
   const openEditor = useCallback(async () => {
     const project = projectRef.current;
@@ -238,7 +412,7 @@ export function useLauncher() {
     ...state,
     setProject,
     startRojo,
-    stopRojo,
+    stopAll,
     startDevelopment,
     openEditor,
     clearLogs,

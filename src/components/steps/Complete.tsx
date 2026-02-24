@@ -75,7 +75,8 @@ export function Complete({
       <div className="mt-6 space-y-1.5">
         {[
           "Aftman (toolchain manager)",
-          "Rojo (file sync with Studio)",
+          "Rojo (script sync with Studio)",
+          "RbxSync (instance sync with Studio)",
           `${contextFile} (AI context)`,
           "Roblox project structure",
         ].map((item) => (

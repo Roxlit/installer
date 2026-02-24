@@ -4,6 +4,13 @@ interface LogTerminalProps {
   logs: string[];
 }
 
+function getLineClass(line: string): string {
+  if (line.includes("[err]")) return "text-yellow-400/80";
+  if (line.startsWith("[rbxsync]")) return "text-blue-400/70";
+  if (line.startsWith("[rojo]")) return "text-emerald-400/70";
+  return "text-zinc-400/70";
+}
+
 export function LogTerminal({ logs }: LogTerminalProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -22,18 +29,11 @@ export function LogTerminal({ logs }: LogTerminalProps) {
       <div className="flex-1 overflow-y-auto p-3 font-mono text-xs leading-5">
         {logs.length === 0 ? (
           <span className="text-zinc-600">
-            Waiting for rojo serve...
+            Waiting for servers to start...
           </span>
         ) : (
           logs.map((line, i) => (
-            <div
-              key={i}
-              className={
-                line.startsWith("[err]")
-                  ? "text-yellow-400/80"
-                  : "text-emerald-400/70"
-              }
-            >
+            <div key={i} className={getLineClass(line)}>
               {line}
             </div>
           ))

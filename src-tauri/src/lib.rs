@@ -91,14 +91,20 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .manage(commands::rojo::RojoProcess::default())
+        .manage(commands::rbxsync::RbxSyncProcess::default())
         .invoke_handler(tauri::generate_handler![
             commands::detect::detect_environment,
             commands::install::run_installation,
             commands::config::load_config,
             commands::config::save_project,
+            commands::config::save_update_state,
+            commands::update::check_for_update,
             commands::rojo::start_rojo,
             commands::rojo::stop_rojo,
             commands::rojo::get_rojo_status,
+            commands::rbxsync::start_rbxsync,
+            commands::rbxsync::stop_rbxsync,
+            commands::rbxsync::get_rbxsync_status,
             open_url_fallback,
             open_in_editor,
         ])
@@ -106,6 +112,10 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 // Kill rojo serve when the window is closed
                 if let Some(state) = _window.try_state::<commands::rojo::RojoProcess>() {
+                    state.inner().kill_sync();
+                }
+                // Kill rbxsync serve when the window is closed
+                if let Some(state) = _window.try_state::<commands::rbxsync::RbxSyncProcess>() {
                     state.inner().kill_sync();
                 }
             }

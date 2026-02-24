@@ -1,0 +1,74 @@
+name: Release Roxlit
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.2.0)"
+        required: true
+        type: string
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version format
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Error: Version must be in X.Y.Z format"
+            exit 1
+          fi
+
+  build-and-release:
+    needs: validate
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Update version in Cargo.toml
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          cd src-tauri
+          (Get-Content Cargo.toml) -replace 'version = ".*?"', "version = `"$env:VERSION`"" | Set-Content Cargo.toml -NoNewline:$false
+        shell: pwsh
+
+      - name: Update version in tauri.conf.json
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $conf = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $conf.version = "$env:VERSION"
+          $conf | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+        shell: pwsh
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: npx tauri
+          tagName: v${{ inputs.version }}
+          releaseName: Roxlit v${{ inputs.version }}
+          releaseDraft: false
+          prerelease: false

@@ -65,6 +65,8 @@ export interface DetectionResult {
   rojoVersion: string | null;
   aftmanInstalled: boolean;
   aftmanVersion: string | null;
+  rbxsyncInstalled: boolean;
+  rbxsyncVersion: string | null;
 }
 
 export type SetupEvent =
@@ -101,6 +103,7 @@ export interface InstallConfig {
   projectName: string;
   skipAftman: boolean;
   skipRojo: boolean;
+  skipRbxsync: boolean;
   pluginsPath: string | null;
 }
 
@@ -121,6 +124,15 @@ export interface RoxlitConfig {
   version: number;
   projects: ProjectEntry[];
   lastActiveProject: string | null;
+  lastUpdateCheck?: string | null;
+  dismissedVersion?: string | null;
+}
+
+export interface UpdateInfo {
+  version: string;
+  publishedAt: string;
+  htmlUrl: string;
+  body: string;
 }
 
 // --- Rojo events (matches Rust RojoEvent) ---
@@ -132,3 +144,13 @@ export type RojoEvent =
   | { event: "error"; data: { message: string } };
 
 export type RojoStatus = "stopped" | "starting" | "running" | "error";
+
+// --- RbxSync events (matches Rust RbxSyncEvent) ---
+
+export type RbxSyncEvent =
+  | { event: "output"; data: { line: string; stream: string } }
+  | { event: "started" }
+  | { event: "stopped"; data: { code: number | null } }
+  | { event: "error"; data: { message: string } };
+
+export type RbxSyncStatus = "stopped" | "starting" | "running" | "error" | "unavailable";
