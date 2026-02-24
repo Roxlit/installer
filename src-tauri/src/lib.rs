@@ -6,16 +6,52 @@ mod templates;
 pub mod util;
 
 /// Open a folder in the user's code editor (cursor, code, etc.)
+/// For GUI editors (cursor, code, windsurf): passes the path as argument to open the folder.
+/// For Claude Code: opens a terminal in the project directory and runs `claude`.
 #[tauri::command]
 async fn open_in_editor(editor: String, path: String) -> Result<(), String> {
+    let path = util::expand_tilde(&path);
+
+    if editor == "claude" {
+        // Claude Code is a CLI tool — open a terminal at the project directory
+        #[cfg(target_os = "windows")]
+        {
+            // Try Windows Terminal first, fall back to cmd.exe
+            let result = tokio::process::Command::new("wt.exe")
+                .args(["-d", &path, "cmd", "/k", "claude"])
+                .spawn();
+            if result.is_ok() {
+                return Ok(());
+            }
+            // Fallback: cmd.exe
+            let result = tokio::process::Command::new("cmd.exe")
+                .args(["/c", "start", "cmd.exe", "/k", &format!("cd /d \"{}\" && claude", path)])
+                .spawn();
+            match result {
+                Ok(_) => return Ok(()),
+                Err(e) => return Err(format!("Failed to open terminal: {e}")),
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // On macOS/Linux, just run claude in the project directory
+            let result = tokio::process::Command::new("claude")
+                .current_dir(&path)
+                .spawn();
+            match result {
+                Ok(_) => return Ok(()),
+                Err(e) => return Err(format!("Failed to open claude: {e}")),
+            }
+        }
+    }
+
+    // GUI editors: pass path as argument to open the folder
     let cmd = match editor.as_str() {
         "cursor" => "cursor",
-        "claude" => "claude",
         "vscode" | "windsurf" => "code",
         _ => "code",
     };
 
-    let path = util::expand_tilde(&path);
     let result = tokio::process::Command::new(cmd)
         .arg(&path)
         .spawn();
