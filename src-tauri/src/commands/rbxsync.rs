@@ -89,6 +89,23 @@ pub async fn start_rbxsync(
     let rbxsync = rbxsync_bin_path();
     let project_path = expand_tilde(&project_path);
 
+    // Ensure rbxsync.json exists (without it, RbxSync defaults to ./src and deletes .luau files)
+    let project_dir = std::path::Path::new(&project_path);
+    let rbxsync_json = project_dir.join("rbxsync.json");
+    if !rbxsync_json.exists() {
+        let name = project_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("my-game");
+        let _ = std::fs::write(&rbxsync_json, crate::templates::rbxsync_json(name));
+    }
+
+    // Ensure instances/ directory exists for RbxSync
+    let instances_dir = project_dir.join("instances");
+    if !instances_dir.exists() {
+        let _ = std::fs::create_dir_all(&instances_dir);
+    }
+
     // Kill any orphaned rbxsync process holding the port from a previous session
     kill_orphaned_rbxsync().await;
 

@@ -118,7 +118,7 @@ pub fn rbxsync_json(project_name: &str) -> String {
     format!(
         r#"{{
   "name": "{project_name}",
-  "tree": "./src",
+  "tree": "./instances",
   "config": {{
     "excludeServices": [
       "CoreGui",

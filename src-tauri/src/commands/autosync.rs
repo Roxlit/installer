@@ -225,7 +225,7 @@ async fn run_extract_command(project_path: &str) -> std::result::Result<String, 
 }
 
 fn create_backup(project_path: &str) -> std::result::Result<String, String> {
-    let src_dir = Path::new(project_path).join("src");
+    let src_dir = Path::new(project_path).join("instances");
     if !src_dir.exists() {
         return Ok(String::new());
     }
@@ -296,7 +296,7 @@ fn cleanup_old_backups(project_path: &str, max_backups: usize) {
 }
 
 fn snapshot_mtimes(project_path: &str) -> HashMap<PathBuf, SystemTime> {
-    let src_dir = Path::new(project_path).join("src");
+    let src_dir = Path::new(project_path).join("instances");
     let files = collect_rbxjson_files(&src_dir);
     let mut mtimes = HashMap::new();
     for file in files {
@@ -352,17 +352,17 @@ pub async fn start_auto_sync(
             }
         };
 
-        let src_path = PathBuf::from(&watcher_project).join("src");
-        if src_path.exists() {
-            if let Err(e) = watcher.watch(&src_path, RecursiveMode::Recursive) {
+        let instances_path = PathBuf::from(&watcher_project).join("instances");
+        if instances_path.exists() {
+            if let Err(e) = watcher.watch(&instances_path, RecursiveMode::Recursive) {
                 let _ = watcher_event.send(SyncEvent::Error {
-                    message: format!("Failed to watch src/: {e}"),
+                    message: format!("Failed to watch instances/: {e}"),
                 });
                 return;
             }
         } else {
             let _ = watcher_event.send(SyncEvent::Error {
-                message: "src/ directory not found — file watcher inactive".into(),
+                message: "instances/ directory not found — file watcher inactive".into(),
             });
         }
 
