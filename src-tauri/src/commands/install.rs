@@ -454,23 +454,61 @@ async fn install_rojo(config: &InstallConfig, on_event: &Channel<SetupEvent>) ->
     on_event
         .send(SetupEvent::StepProgress {
             step: "rojo".into(),
+            progress: 0.3,
+            detail: "Stopping existing Rojo processes...".into(),
+        })
+        .map_err(|e| InstallerError::Custom(e.to_string()))?;
+
+    // Kill any running rojo process so aftman can overwrite rojo.exe
+    kill_process_by_name("rojo").await;
+
+    on_event
+        .send(SetupEvent::StepProgress {
+            step: "rojo".into(),
             progress: 0.4,
             detail: "Downloading Rojo (this may take a moment)...".into(),
         })
         .map_err(|e| InstallerError::Custom(e.to_string()))?;
 
-    let mut cmd = tokio::process::Command::new(&aftman_bin);
-    cmd.arg("install")
-        .arg("--no-trust-check")
-        .current_dir(&project_path);
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    let output = cmd.output().await?;
+    // Try aftman install with retry — file locks on Windows can linger briefly
+    let max_attempts = 3;
+    let mut last_err = String::new();
+    for attempt in 1..=max_attempts {
+        let mut cmd = tokio::process::Command::new(&aftman_bin);
+        cmd.arg("install")
+            .arg("--no-trust-check")
+            .current_dir(&project_path);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let output = cmd.output().await?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.success() {
+            last_err.clear();
+            break;
+        }
+
+        last_err = String::from_utf8_lossy(&output.stderr).to_string();
+
+        // Only retry on file lock errors (os error 32 on Windows)
+        if !last_err.contains("os error 32") || attempt == max_attempts {
+            break;
+        }
+
+        on_event
+            .send(SetupEvent::StepProgress {
+                step: "rojo".into(),
+                progress: 0.4,
+                detail: format!("File locked, retrying ({attempt}/{max_attempts})..."),
+            })
+            .map_err(|e| InstallerError::Custom(e.to_string()))?;
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        kill_process_by_name("rojo").await;
+    }
+
+    if !last_err.is_empty() {
         return Err(InstallerError::Custom(format!(
-            "Failed to install Rojo: {stderr}"
+            "Failed to install Rojo: {last_err}"
         )));
     }
 
@@ -672,4 +710,26 @@ async fn install_studio_plugin(config: &InstallConfig) -> Result<()> {
     std::fs::write(&plugin_file, &bytes)?;
 
     Ok(())
+}
+
+/// Attempts to kill all processes matching the given name.
+/// Silently ignores errors — this is best-effort to release file locks.
+async fn kill_process_by_name(name: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = tokio::process::Command::new("taskkill");
+        cmd.args(["/F", "/IM", &format!("{name}.exe")])
+            .creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.output().await;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut cmd = tokio::process::Command::new("pkill");
+        cmd.args(["-f", name]);
+        let _ = cmd.output().await;
+    }
+
+    // Give the OS a moment to release file handles
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 }
