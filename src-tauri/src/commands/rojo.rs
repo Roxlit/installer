@@ -92,11 +92,21 @@ pub async fn start_rojo(
     let rojo = rojo_bin_path();
     let project_path = expand_tilde(&project_path);
 
-    // Ensure aftman.toml exists (rojo won't start without it)
+    // Ensure essential config files exist (may be missing if project predates current version)
     let project_dir = std::path::Path::new(&project_path);
+
     let aftman_toml = project_dir.join("aftman.toml");
     if !aftman_toml.exists() {
         let _ = std::fs::write(&aftman_toml, "[tools]\nrojo = \"rojo-rbx/rojo@7.4.4\"\n");
+    }
+
+    let project_json = project_dir.join("default.project.json");
+    if !project_json.exists() {
+        let name = project_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("my-game");
+        let _ = std::fs::write(&project_json, crate::templates::project_json(name));
     }
 
     // Ensure project directories exist (user may have deleted src/)
