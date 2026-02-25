@@ -94,7 +94,7 @@ pub async fn start_rojo(
 
     // Ensure project directories exist (user may have deleted src/)
     let project_dir = std::path::Path::new(&project_path);
-    for subdir in &["src/server", "src/client", "src/shared"] {
+    for subdir in &["src/ServerScriptService", "src/StarterPlayer/StarterPlayerScripts", "src/ReplicatedStorage"] {
         let dir = project_dir.join(subdir);
         if !dir.exists() {
             let _ = std::fs::create_dir_all(&dir);

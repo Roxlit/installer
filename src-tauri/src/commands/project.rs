@@ -7,10 +7,10 @@ use std::path::Path;
 pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
     let root = Path::new(project_path);
 
-    // Create directory tree
-    fs::create_dir_all(root.join("src").join("server"))?;
-    fs::create_dir_all(root.join("src").join("client"))?;
-    fs::create_dir_all(root.join("src").join("shared"))?;
+    // Create directory tree (real Roblox service names)
+    fs::create_dir_all(root.join("src").join("ServerScriptService"))?;
+    fs::create_dir_all(root.join("src").join("StarterPlayer").join("StarterPlayerScripts"))?;
+    fs::create_dir_all(root.join("src").join("ReplicatedStorage"))?;
 
     // Rojo project config
     fs::write(
@@ -23,17 +23,17 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
 
     // Starter scripts so the project isn't empty
     fs::write(
-        root.join("src").join("server").join("main.server.luau"),
+        root.join("src").join("ServerScriptService").join("main.server.luau"),
         templates::server_script(),
     )?;
 
     fs::write(
-        root.join("src").join("client").join("main.client.luau"),
+        root.join("src").join("StarterPlayer").join("StarterPlayerScripts").join("main.client.luau"),
         templates::client_script(),
     )?;
 
     fs::write(
-        root.join("src").join("shared").join("Shared.luau"),
+        root.join("src").join("ReplicatedStorage").join("Shared.luau"),
         templates::shared_module(),
     )?;
 
