@@ -88,6 +88,10 @@ pub async fn start_rbxsync(
 
     let rbxsync = rbxsync_bin_path();
     let project_path = expand_tilde(&project_path);
+
+    // Kill any orphaned rbxsync process holding the port from a previous session
+    kill_orphaned_rbxsync().await;
+
     let mut cmd = tokio::process::Command::new(&rbxsync);
     cmd.arg("serve")
         .current_dir(&project_path)
@@ -256,6 +260,27 @@ pub async fn extract_rbxsync(project_path: String) -> Result<String> {
             stdout, stderr
         )))
     }
+}
+
+/// Kill orphaned rbxsync processes from a previous session that may still hold the port.
+async fn kill_orphaned_rbxsync() {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = tokio::process::Command::new("taskkill");
+        cmd.args(["/F", "/IM", "rbxsync.exe"])
+            .creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.output().await;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut cmd = tokio::process::Command::new("pkill");
+        cmd.args(["-f", "rbxsync serve"]);
+        let _ = cmd.output().await;
+    }
+
+    // Give the OS time to release the port
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 }
 
 /// Strip ANSI escape sequences from a string.
