@@ -154,3 +154,16 @@ export type RbxSyncEvent =
   | { event: "error"; data: { message: string } };
 
 export type RbxSyncStatus = "stopped" | "starting" | "running" | "error" | "unavailable";
+
+// --- Auto-sync events (matches Rust SyncEvent) ---
+
+export type SyncEvent =
+  | { event: "fileChanged"; data: { path: string } }
+  | { event: "syncStarted" }
+  | { event: "syncCompleted"; data: { filesSynced: number } }
+  | { event: "extractStarted" }
+  | { event: "extractCompleted"; data: { backupPath: string } }
+  | { event: "conflict"; data: { path: string; backupPath: string } }
+  | { event: "error"; data: { message: string } };
+
+export type AutoSyncStatus = "off" | "idle" | "syncing" | "extracting" | "error";

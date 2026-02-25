@@ -54,7 +54,7 @@ impl RbxSyncProcess {
 }
 
 /// Resolve the rbxsync binary path (~/.roxlit/bin/rbxsync or PATH).
-fn rbxsync_bin_path() -> String {
+pub(crate) fn rbxsync_bin_path() -> String {
     if let Some(home) = dirs::home_dir() {
         let bin = if cfg!(target_os = "windows") {
             home.join(".roxlit").join("bin").join("rbxsync.exe")
@@ -233,10 +233,15 @@ pub async fn get_rbxsync_status(state: tauri::State<'_, RbxSyncProcess>) -> Resu
 
 /// Run `rbxsync extract` to do a full DataModel extraction.
 /// Should be called after Studio connects to get the initial state of all instances.
+/// Protects .luau files from being overwritten — Rojo owns scripts.
 #[tauri::command]
 pub async fn extract_rbxsync(project_path: String) -> Result<String> {
     let rbxsync = rbxsync_bin_path();
     let project_path = expand_tilde(&project_path);
+
+    // Snapshot .luau files before extract
+    let luau_snapshot = super::autosync::snapshot_luau_files(&project_path);
+
     let mut cmd = tokio::process::Command::new(&rbxsync);
     cmd.arg("extract")
         .current_dir(&project_path)
@@ -249,11 +254,21 @@ pub async fn extract_rbxsync(project_path: String) -> Result<String> {
         .await
         .map_err(|e| InstallerError::Custom(format!("Failed to run rbxsync extract: {e}")))?;
 
+    // Restore any .luau files that rbxsync overwrote
+    let restored = super::autosync::restore_luau_files(&luau_snapshot);
+
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if output.status.success() {
-        Ok(format!("{}{}", stdout, stderr))
+        let mut result = format!("{}{}", stdout, stderr);
+        if restored > 0 {
+            result.push_str(&format!(
+                "\n(Roxlit: restored {} .luau file(s) — Rojo owns scripts)",
+                restored
+            ));
+        }
+        Ok(result)
     } else {
         Err(InstallerError::Custom(format!(
             "rbxsync extract failed: {}{}",

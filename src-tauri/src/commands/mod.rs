@@ -1,3 +1,4 @@
+pub mod autosync;
 pub mod config;
 pub mod detect;
 pub mod install;

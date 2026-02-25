@@ -14,7 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { LogTerminal } from "./LogTerminal";
 import { UpdateBanner } from "./UpdateBanner";
 import { TOOL_OPTIONS } from "@/lib/types";
-import type { RojoStatus, RbxSyncStatus, UpdateInfo } from "@/lib/types";
+import type { RojoStatus, RbxSyncStatus, AutoSyncStatus, UpdateInfo } from "@/lib/types";
 
 async function openExternal(url: string) {
   try {
@@ -35,6 +35,7 @@ interface LauncherProps {
   rojoStatus: RojoStatus;
   rojoPort: number | null;
   rbxsyncStatus: RbxSyncStatus;
+  autoSyncStatus: AutoSyncStatus;
   logs: string[];
   error: string | null;
   update: UpdateInfo | null;
@@ -105,6 +106,32 @@ function RbxSyncStatusText({ status }: { status: RbxSyncStatus }) {
   }
 }
 
+function AutoSyncStatusDot({ status }: { status: AutoSyncStatus }) {
+  const colors: Record<string, string> = {
+    off: "bg-zinc-700",
+    idle: "bg-cyan-400",
+    syncing: "bg-cyan-400 animate-pulse",
+    extracting: "bg-cyan-400 animate-pulse",
+    error: "bg-red-400",
+  };
+  return <div className={`h-2 w-2 rounded-full ${colors[status] ?? "bg-zinc-500"}`} />;
+}
+
+function AutoSyncStatusText({ status }: { status: AutoSyncStatus }) {
+  switch (status) {
+    case "off":
+      return <span className="text-zinc-600">Auto-sync off</span>;
+    case "idle":
+      return <span className="text-cyan-400">Auto-sync active</span>;
+    case "syncing":
+      return <span className="text-cyan-400">Syncing to Studio...</span>;
+    case "extracting":
+      return <span className="text-cyan-400">Extracting from Studio...</span>;
+    case "error":
+      return <span className="text-red-400">Auto-sync error</span>;
+  }
+}
+
 export function Launcher({
   projectName,
   projectPath,
@@ -112,6 +139,7 @@ export function Launcher({
   rojoStatus,
   rojoPort,
   rbxsyncStatus,
+  autoSyncStatus,
   logs,
   error,
   update,
@@ -218,6 +246,12 @@ export function Launcher({
           <div className="flex items-center gap-2">
             <StatusDot status={rbxsyncStatus} />
             <RbxSyncStatusText status={rbxsyncStatus} />
+          </div>
+        )}
+        {rbxsyncStatus === "running" && autoSyncStatus !== "off" && (
+          <div className="flex items-center gap-2">
+            <AutoSyncStatusDot status={autoSyncStatus} />
+            <AutoSyncStatusText status={autoSyncStatus} />
           </div>
         )}
       </div>

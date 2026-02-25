@@ -7,6 +7,7 @@ interface LogTerminalProps {
 
 function getLineClass(line: string): string {
   if (line.includes("[err]")) return "text-yellow-400/80";
+  if (line.startsWith("[sync]")) return "text-cyan-400/70";
   if (line.startsWith("[rbxsync]")) return "text-blue-400/70";
   if (line.startsWith("[rojo]")) return "text-emerald-400/70";
   return "text-zinc-400/70";

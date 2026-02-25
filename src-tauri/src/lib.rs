@@ -92,6 +92,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(commands::rojo::RojoProcess::default())
         .manage(commands::rbxsync::RbxSyncProcess::default())
+        .manage(commands::autosync::AutoSyncState::default())
         .invoke_handler(tauri::generate_handler![
             commands::detect::detect_environment,
             commands::install::run_installation,
@@ -106,6 +107,11 @@ pub fn run() {
             commands::rbxsync::stop_rbxsync,
             commands::rbxsync::get_rbxsync_status,
             commands::rbxsync::extract_rbxsync,
+            commands::autosync::start_auto_sync,
+            commands::autosync::stop_auto_sync,
+            commands::autosync::get_auto_sync_status,
+            commands::autosync::trigger_sync_now,
+            commands::autosync::trigger_extract_now,
             open_url_fallback,
             open_in_editor,
         ])
@@ -117,6 +123,10 @@ pub fn run() {
                 }
                 // Kill rbxsync serve when the window is closed
                 if let Some(state) = _window.try_state::<commands::rbxsync::RbxSyncProcess>() {
+                    state.inner().kill_sync();
+                }
+                // Stop auto-sync when the window is closed
+                if let Some(state) = _window.try_state::<commands::autosync::AutoSyncState>() {
                     state.inner().kill_sync();
                 }
             }

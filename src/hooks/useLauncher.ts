@@ -6,6 +6,8 @@ import type {
   RojoStatus,
   RbxSyncEvent,
   RbxSyncStatus,
+  SyncEvent,
+  AutoSyncStatus,
 } from "@/lib/types";
 
 const MAX_LOGS = 500;
@@ -18,6 +20,7 @@ interface LauncherState {
   rojoStatus: RojoStatus;
   rojoPort: number | null;
   rbxsyncStatus: RbxSyncStatus;
+  autoSyncStatus: AutoSyncStatus;
   logs: string[];
   error: string | null;
 }
@@ -35,6 +38,8 @@ type Action =
   | { type: "RBXSYNC_STOPPED"; code: number | null }
   | { type: "RBXSYNC_ERROR"; message: string }
   | { type: "RBXSYNC_UNAVAILABLE" }
+  | { type: "AUTOSYNC_STATUS"; status: AutoSyncStatus }
+  | { type: "AUTOSYNC_OUTPUT"; line: string }
   | { type: "CLEAR_LOGS" };
 
 const initialState: LauncherState = {
@@ -42,6 +47,7 @@ const initialState: LauncherState = {
   rojoStatus: "stopped",
   rojoPort: null,
   rbxsyncStatus: "stopped",
+  autoSyncStatus: "off",
   logs: [],
   error: null,
 };
@@ -94,6 +100,15 @@ function reducer(state: LauncherState, action: Action): LauncherState {
       return { ...state, rbxsyncStatus: "error", error: action.message };
     case "RBXSYNC_UNAVAILABLE":
       return { ...state, rbxsyncStatus: "unavailable" };
+    case "AUTOSYNC_STATUS":
+      return { ...state, autoSyncStatus: action.status };
+    case "AUTOSYNC_OUTPUT": {
+      const logs = [...state.logs, `[sync] ${action.line}`];
+      return {
+        ...state,
+        logs: logs.length > MAX_LOGS ? logs.slice(-MAX_LOGS) : logs,
+      };
+    }
     case "CLEAR_LOGS":
       return { ...state, logs: [] };
     default:
@@ -105,6 +120,7 @@ export function useLauncher() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const rojoChannelRef = useRef<Channel<RojoEvent> | null>(null);
   const rbxsyncChannelRef = useRef<Channel<RbxSyncEvent> | null>(null);
+  const syncChannelRef = useRef<Channel<SyncEvent> | null>(null);
   const projectRef = useRef<ProjectEntry | null>(null);
   const stopRequestedRef = useRef(false);
   const restartCountRef = useRef(0);
@@ -201,6 +217,62 @@ export function useLauncher() {
   // Track whether we already triggered extraction for this session
   const extractionTriggeredRef = useRef(false);
 
+  // --- Auto-sync event handler ---
+  function createSyncEventHandler(): (event: SyncEvent) => void {
+    return (event: SyncEvent) => {
+      switch (event.event) {
+        case "fileChanged":
+          dispatch({ type: "AUTOSYNC_OUTPUT", line: `Changed: ${event.data.path}` });
+          break;
+        case "syncStarted":
+          dispatch({ type: "AUTOSYNC_STATUS", status: "syncing" });
+          dispatch({ type: "AUTOSYNC_OUTPUT", line: "Syncing files to Studio..." });
+          break;
+        case "syncCompleted":
+          dispatch({ type: "AUTOSYNC_STATUS", status: "idle" });
+          dispatch({ type: "AUTOSYNC_OUTPUT", line: `Synced ${event.data.filesSynced} file(s) to Studio` });
+          break;
+        case "extractStarted":
+          dispatch({ type: "AUTOSYNC_STATUS", status: "extracting" });
+          dispatch({ type: "AUTOSYNC_OUTPUT", line: "Extracting from Studio..." });
+          break;
+        case "extractCompleted":
+          dispatch({ type: "AUTOSYNC_STATUS", status: "idle" });
+          dispatch({ type: "AUTOSYNC_OUTPUT", line: "Extract complete (backup saved)" });
+          break;
+        case "conflict":
+          dispatch({ type: "AUTOSYNC_OUTPUT", line: `Conflict: ${event.data.path} (backup: ${event.data.backupPath})` });
+          break;
+        case "error":
+          dispatch({ type: "AUTOSYNC_STATUS", status: "error" });
+          dispatch({ type: "AUTOSYNC_OUTPUT", line: `Error: ${event.data.message}` });
+          break;
+      }
+    };
+  }
+
+  // --- Start auto-sync after initial extraction ---
+  function startAutoSync(projectPath: string) {
+    const channel = new Channel<SyncEvent>();
+    syncChannelRef.current = channel;
+    channel.onmessage = createSyncEventHandler();
+
+    dispatch({ type: "AUTOSYNC_STATUS", status: "idle" });
+    dispatch({ type: "AUTOSYNC_OUTPUT", line: "Auto-sync started (watcher + poller)" });
+
+    invoke("start_auto_sync", {
+      projectPath,
+      extractIntervalSecs: 30,
+      onEvent: channel,
+    }).catch((err) => {
+      dispatch({ type: "AUTOSYNC_STATUS", status: "error" });
+      dispatch({
+        type: "AUTOSYNC_OUTPUT",
+        line: `Failed to start auto-sync: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    });
+  }
+
   // --- RbxSync event handler ---
   function createRbxSyncEventHandler(): (event: RbxSyncEvent) => void {
     return (event: RbxSyncEvent) => {
@@ -231,6 +303,10 @@ export function useLauncher() {
                     line: `Extraction complete: ${result}`,
                     stream: "stdout",
                   });
+                  // Start auto-sync after successful extraction
+                  if (project) {
+                    startAutoSync(project.path);
+                  }
                 })
                 .catch((err) => {
                   dispatch({
@@ -378,17 +454,20 @@ export function useLauncher() {
       rbxsyncRestartTimerRef.current = null;
     }
 
-    // Stop both in parallel
+    // Stop auto-sync, rojo, and rbxsync in parallel
     const results = await Promise.allSettled([
+      invoke("stop_auto_sync"),
       invoke("stop_rojo"),
       invoke("stop_rbxsync"),
     ]);
 
+    dispatch({ type: "AUTOSYNC_STATUS", status: "off" });
     dispatch({ type: "ROJO_STOPPED", code: null });
     if (state.rbxsyncStatus !== "unavailable") {
       dispatch({ type: "RBXSYNC_STOPPED", code: null });
     }
 
+    syncChannelRef.current = null;
     rojoChannelRef.current = null;
     rbxsyncChannelRef.current = null;
 
