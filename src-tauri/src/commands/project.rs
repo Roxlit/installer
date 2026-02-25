@@ -18,6 +18,12 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
     fs::create_dir_all(root.join("src").join("StarterGui"))?;
     fs::create_dir_all(root.join("src").join("StarterPack"))?;
 
+    // Aftman tool manifest (tells aftman which rojo version to use)
+    fs::write(
+        root.join("aftman.toml"),
+        "[tools]\nrojo = \"rojo-rbx/rojo@7.4.4\"\n",
+    )?;
+
     // Rojo project config
     fs::write(
         root.join("default.project.json"),

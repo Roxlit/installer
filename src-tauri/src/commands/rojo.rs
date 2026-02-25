@@ -92,8 +92,14 @@ pub async fn start_rojo(
     let rojo = rojo_bin_path();
     let project_path = expand_tilde(&project_path);
 
-    // Ensure project directories exist (user may have deleted src/)
+    // Ensure aftman.toml exists (rojo won't start without it)
     let project_dir = std::path::Path::new(&project_path);
+    let aftman_toml = project_dir.join("aftman.toml");
+    if !aftman_toml.exists() {
+        let _ = std::fs::write(&aftman_toml, "[tools]\nrojo = \"rojo-rbx/rojo@7.4.4\"\n");
+    }
+
+    // Ensure project directories exist (user may have deleted src/)
     for subdir in &[
         "src/ServerScriptService",
         "src/StarterPlayer/StarterPlayerScripts",
