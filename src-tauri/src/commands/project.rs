@@ -7,10 +7,16 @@ use std::path::Path;
 pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
     let root = Path::new(project_path);
 
-    // Create directory tree (real Roblox service names)
+    // Create directory tree (all services where Roblox allows scripts)
     fs::create_dir_all(root.join("src").join("ServerScriptService"))?;
     fs::create_dir_all(root.join("src").join("StarterPlayer").join("StarterPlayerScripts"))?;
+    fs::create_dir_all(root.join("src").join("StarterPlayer").join("StarterCharacterScripts"))?;
     fs::create_dir_all(root.join("src").join("ReplicatedStorage"))?;
+    fs::create_dir_all(root.join("src").join("ReplicatedFirst"))?;
+    fs::create_dir_all(root.join("src").join("ServerStorage"))?;
+    fs::create_dir_all(root.join("src").join("Workspace"))?;
+    fs::create_dir_all(root.join("src").join("StarterGui"))?;
+    fs::create_dir_all(root.join("src").join("StarterPack"))?;
 
     // Rojo project config
     fs::write(
