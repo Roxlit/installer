@@ -150,7 +150,35 @@ The RbxSync MCP server is configured and provides these tools:
 When the user asks you to modify Parts, GUIs, or other non-script objects:
 1. Use the RbxSync MCP tools to read/modify instances directly in Studio
 2. Changes sync bidirectionally — modifications in Studio also sync to the filesystem
-3. Instance files are stored as `.rbxjson` in the project directory
+3. You can also read/edit the `.rbxjson` files directly (see file structure below)
+
+### RbxSync File Structure
+
+Instances are stored under `src/` mirroring the Roblox DataModel hierarchy:
+
+```
+src/
+  Workspace/
+    SpawnLocation/          ← Folder name = instance name
+      _meta.rbxjson         ← Class + properties of SpawnLocation
+      Decal.rbxjson         ← Child instance (simple, no children of its own)
+    MyModel/
+      _meta.rbxjson         ← Class + properties of MyModel
+      Part1.rbxjson         ← Child Part
+      Part2/                ← Child with its own children → becomes a folder
+        _meta.rbxjson
+        SurfaceGui.rbxjson
+  Lighting/
+    _meta.rbxjson           ← Lighting service properties
+    Atmosphere.rbxjson      ← Post-processing effect
+```
+
+Rules:
+- **Instances with children** → folder with `_meta.rbxjson` inside (contains class + properties)
+- **Leaf instances** (no children) → single `.rbxjson` file
+- **`_meta.rbxjson`** always contains `""ClassName""` and `""Properties""` — edit properties here to change the instance
+- To find an instance, **search by folder/file name** in `src/`, not just in script directories
+- Changes to `.rbxjson` files sync to Studio automatically when RbxSync is running
 
 "#
     } else {
@@ -181,6 +209,34 @@ If the user reports that instance sync isn't working, remind them to activate th
 - Instance properties are stored as `.rbxjson` files in the project directory
 - You can read and modify these files to change Part positions, GUI layouts, etc.
 - Changes sync automatically to Studio when RbxSync is running
+
+### RbxSync File Structure
+
+Instances are stored under `src/` mirroring the Roblox DataModel hierarchy:
+
+```
+src/
+  Workspace/
+    SpawnLocation/          ← Folder name = instance name
+      _meta.rbxjson         ← Class + properties of SpawnLocation
+      Decal.rbxjson         ← Child instance (simple, no children of its own)
+    MyModel/
+      _meta.rbxjson         ← Class + properties of MyModel
+      Part1.rbxjson         ← Child Part
+      Part2/                ← Child with its own children → becomes a folder
+        _meta.rbxjson
+        SurfaceGui.rbxjson
+  Lighting/
+    _meta.rbxjson           ← Lighting service properties
+    Atmosphere.rbxjson      ← Post-processing effect
+```
+
+Rules:
+- **Instances with children** → folder with `_meta.rbxjson` inside (contains class + properties)
+- **Leaf instances** (no children) → single `.rbxjson` file
+- **`_meta.rbxjson`** always contains `""ClassName""` and `""Properties""` — edit properties here to change the instance
+- To find an instance, **search by folder/file name** in `src/`, not just in script directories
+- Changes to `.rbxjson` files sync to Studio automatically when RbxSync is running
 
 "#
     };
