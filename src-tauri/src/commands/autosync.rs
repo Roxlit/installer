@@ -225,7 +225,7 @@ async fn run_extract_command(project_path: &str) -> std::result::Result<String, 
 }
 
 fn create_backup(project_path: &str) -> std::result::Result<String, String> {
-    let src_dir = Path::new(project_path).join("instances");
+    let src_dir = Path::new(project_path).join("src");
     if !src_dir.exists() {
         return Ok(String::new());
     }
@@ -296,7 +296,7 @@ fn cleanup_old_backups(project_path: &str, max_backups: usize) {
 }
 
 fn snapshot_mtimes(project_path: &str) -> HashMap<PathBuf, SystemTime> {
-    let src_dir = Path::new(project_path).join("instances");
+    let src_dir = Path::new(project_path).join("src");
     let files = collect_rbxjson_files(&src_dir);
     let mut mtimes = HashMap::new();
     for file in files {
@@ -352,17 +352,17 @@ pub async fn start_auto_sync(
             }
         };
 
-        let instances_path = PathBuf::from(&watcher_project).join("instances");
-        if instances_path.exists() {
-            if let Err(e) = watcher.watch(&instances_path, RecursiveMode::Recursive) {
+        let src_path = PathBuf::from(&watcher_project).join("src");
+        if src_path.exists() {
+            if let Err(e) = watcher.watch(&src_path, RecursiveMode::Recursive) {
                 let _ = watcher_event.send(SyncEvent::Error {
-                    message: format!("Failed to watch instances/: {e}"),
+                    message: format!("Failed to watch src/: {e}"),
                 });
                 return;
             }
         } else {
             let _ = watcher_event.send(SyncEvent::Error {
-                message: "instances/ directory not found — file watcher inactive".into(),
+                message: "src/ directory not found — file watcher inactive".into(),
             });
         }
 
@@ -454,7 +454,7 @@ pub async fn start_auto_sync(
             // Create backup
             let backup_path = match create_backup(&poller_project) {
                 Ok(p) if p.is_empty() => {
-                    // No instances/ dir, skip extraction
+                    // No src/ dir, skip extraction
                     continue;
                 }
                 Ok(p) => p,

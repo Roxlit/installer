@@ -95,12 +95,20 @@ pub async fn start_rojo(
     // Kill any orphaned rojo process holding the port from a previous session
     kill_orphaned_rojo().await;
 
-    // Ensure essential config files exist (may be missing if project predates current version)
+    // Ensure project directory and essential config files exist
     let project_dir = std::path::Path::new(&project_path);
+    if !project_dir.exists() {
+        std::fs::create_dir_all(project_dir).map_err(|e| {
+            InstallerError::Custom(format!("Failed to create project directory: {e}"))
+        })?;
+    }
 
     let aftman_toml = project_dir.join("aftman.toml");
     if !aftman_toml.exists() {
-        let _ = std::fs::write(&aftman_toml, "[tools]\nrojo = \"rojo-rbx/rojo@7.4.4\"\n");
+        std::fs::write(&aftman_toml, "[tools]\nrojo = \"rojo-rbx/rojo@7.4.4\"\n")
+            .map_err(|e| InstallerError::Custom(format!(
+                "Failed to write aftman.toml at {}: {e}", aftman_toml.display()
+            )))?;
     }
 
     let project_json = project_dir.join("default.project.json");
@@ -109,7 +117,10 @@ pub async fn start_rojo(
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("my-game");
-        let _ = std::fs::write(&project_json, crate::templates::project_json(name));
+        std::fs::write(&project_json, crate::templates::project_json(name))
+            .map_err(|e| InstallerError::Custom(format!(
+                "Failed to write default.project.json at {}: {e}", project_json.display()
+            )))?;
     }
 
     // Ensure project directories exist (user may have deleted src/)

@@ -89,18 +89,10 @@ pub async fn start_rbxsync(
     let rbxsync = rbxsync_bin_path();
     let project_path = expand_tilde(&project_path);
 
-    // Ensure rbxsync.json exists and points to ./instances (not ./src which would delete .luau files)
+    // Ensure rbxsync.json exists
     let project_dir = std::path::Path::new(&project_path);
     let rbxsync_json = project_dir.join("rbxsync.json");
-    let needs_update = if rbxsync_json.exists() {
-        // Check if existing config still points to ./src (old version)
-        std::fs::read_to_string(&rbxsync_json)
-            .map(|content| content.contains("\"./src\""))
-            .unwrap_or(true)
-    } else {
-        true
-    };
-    if needs_update {
+    if !rbxsync_json.exists() {
         let name = project_dir
             .file_name()
             .and_then(|n| n.to_str())
@@ -109,16 +101,6 @@ pub async fn start_rbxsync(
             .map_err(|e| InstallerError::Custom(format!(
                 "Failed to write rbxsync.json at {}: {e}",
                 rbxsync_json.display()
-            )))?;
-    }
-
-    // Ensure instances/ directory exists for RbxSync
-    let instances_dir = project_dir.join("instances");
-    if !instances_dir.exists() {
-        std::fs::create_dir_all(&instances_dir)
-            .map_err(|e| InstallerError::Custom(format!(
-                "Failed to create instances/ directory at {}: {e}",
-                instances_dir.display()
             )))?;
     }
 
