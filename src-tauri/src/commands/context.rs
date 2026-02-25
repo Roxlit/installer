@@ -8,8 +8,9 @@ pub fn generate_context(project_path: &str, ai_tool: &str, project_name: &str) -
     let root = Path::new(project_path);
 
     // Check if MCP binary exists to include RbxSync MCP info
+    let mcp_bin_name = if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" };
     let mcp_available = dirs::home_dir()
-        .map(|h| h.join(".roxlit").join("bin").join("rbxsync-mcp").exists())
+        .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name).exists())
         .unwrap_or(false);
 
     let context_content = templates::ai_context(project_name, mcp_available);
@@ -67,8 +68,9 @@ fn write_context_packs(project_root: &Path) -> Result<()> {
 
 /// Writes MCP server configuration for the selected AI tool.
 fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
+    let mcp_bin_name = if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" };
     let mcp_binary = dirs::home_dir()
-        .map(|h| h.join(".roxlit").join("bin").join("rbxsync-mcp"))
+        .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name))
         .ok_or_else(|| crate::error::InstallerError::Custom("Cannot find home directory".into()))?;
 
     let mcp_path_str = mcp_binary.to_string_lossy().to_string();

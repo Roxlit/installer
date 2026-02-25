@@ -116,7 +116,7 @@ pub fn ai_context(project_name: &str, mcp_available: bool) -> String {
         r#"
 ## RbxSync (Instance Sync + MCP)
 
-This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync provides **bidirectional sync for all instances** (Parts, GUIs, Models, etc.) and an **MCP server** for AI tool integration.
+This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync provides **bidirectional sync for all instances** (Parts, GUIs, Models, etc.) and an **MCP server** for debugging.
 
 ### How it works
 
@@ -135,74 +135,23 @@ The RbxSync plugin must be activated **once per Studio session**:
 If the user reports that the RbxSync plugin doesn't appear, they need to restart Studio. Plugins are only loaded when Studio starts.
 If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
 
-### MCP Tools Available
+### MCP Tools
 
-The RbxSync MCP server is configured and provides these tools:
-- **get_instance**: Read properties of any instance in Studio
-- **set_property**: Modify instance properties (Position, Size, Color, etc.)
-- **create_instance**: Create new instances (Parts, GUIs, etc.)
-- **delete_instance**: Remove instances from the DataModel
-- **get_children**: List child instances of a parent
-- **get_descendants**: Get all descendants of an instance
+The RbxSync MCP server provides tools that complement local file editing:
 
-### Working with Instances
+**Writing (always use local files):**
+- To modify scripts → edit `.luau` files (Rojo syncs to Studio)
+- To modify instances → edit `.rbxjson` files (RbxSync syncs to Studio)
+- **Never use MCP to create, modify, or delete instances/scripts** — it bypasses sync and causes conflicts
 
-When the user asks you to modify Parts, GUIs, or other non-script objects:
-1. Use the RbxSync MCP tools to read/modify instances directly in Studio
-2. Changes sync bidirectionally — modifications in Studio also sync to the filesystem
-3. You can also read/edit the `.rbxjson` files directly (see file structure below)
+**Reading (choose the most efficient method):**
+- To read a **specific instance** you already know the path to → use `get_instance` (returns only that node, saves tokens vs reading the full `.rbxjson` file)
+- To **explore a large hierarchy** or find instances → read local `.rbxjson` files with Glob + Read (fewer round-trips than chaining `get_children`)
+- To get the **live Studio state** after the user made manual changes → use `get_instance` or `get_children` (local files may be up to 30s stale)
 
-### RbxSync File Structure
-
-Instances are stored under `src/` mirroring the Roblox DataModel hierarchy:
-
-```
-src/
-  Workspace/
-    SpawnLocation/          ← Folder name = instance name
-      _meta.rbxjson         ← Class + properties of SpawnLocation
-      Decal.rbxjson         ← Child instance (simple, no children of its own)
-    MyModel/
-      _meta.rbxjson         ← Class + properties of MyModel
-      Part1.rbxjson         ← Child Part
-      Part2/                ← Child with its own children → becomes a folder
-        _meta.rbxjson
-        SurfaceGui.rbxjson
-  Lighting/
-    _meta.rbxjson           ← Lighting service properties
-    Atmosphere.rbxjson      ← Post-processing effect
-```
-
-Rules:
-- **Instances with children** → folder with `_meta.rbxjson` inside (contains class + properties)
-- **Leaf instances** (no children) → single `.rbxjson` file
-- **`_meta.rbxjson`** always contains `""ClassName""` and `""Properties""` — edit properties here to change the instance
-- To find an instance, **search by folder/file name** in `src/`, not just in script directories
-- Changes to `.rbxjson` files sync to Studio automatically when RbxSync is running
-
-"#
-    } else {
-        r#"
-## RbxSync (Instance Sync)
-
-This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync provides **bidirectional sync for all instances** (Parts, GUIs, Models, etc.).
-
-### How it works
-
-- **Rojo**: Syncs `src/` Luau scripts to the Roblox DataModel (filesystem → Studio). Handles: ServerScriptService, ReplicatedStorage, StarterPlayerScripts
-- **RbxSync**: Syncs instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files). Handles: Workspace, Lighting, SoundService, StarterGui, StarterPack, ServerStorage, and other non-script services
-- Both run simultaneously with no overlap — configured via `rbxsync.json` which excludes services Rojo manages
-
-### IMPORTANT: Activating the RbxSync Plugin
-
-The RbxSync plugin must be activated **once per Studio session**:
-1. If this is the first time after installation, **restart Roblox Studio** so it loads the new plugin
-2. Go to the Plugins tab
-3. Find the RbxSync plugin and click "Sync" or "Connect"
-4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically in the project directory)
-
-If the user reports that the RbxSync plugin doesn't appear, they need to restart Studio. Plugins are only loaded when Studio starts.
-If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
+**Debugging & testing:**
+- `run_code` — execute Luau in Studio for debugging (print values, inspect runtime state)
+- `run_test` — run tests inside Studio
 
 ### Working with Instances
 
@@ -237,6 +186,113 @@ Rules:
 - **`_meta.rbxjson`** always contains `""ClassName""` and `""Properties""` — edit properties here to change the instance
 - To find an instance, **search by folder/file name** in `src/`, not just in script directories
 - Changes to `.rbxjson` files sync to Studio automatically when RbxSync is running
+
+### Sync Workflow
+
+Roxlit manages sync automatically. Here's what you need to know:
+
+**Editing scripts (.luau)**: Just edit the files. Rojo syncs them to Studio in real-time.
+
+**Editing instances (.rbxjson)**: Just edit the files. Roxlit's auto-sync detects changes and runs `rbxsync sync` automatically (~2s delay).
+
+**Reading current Studio state**: For the freshest data, use MCP `get_instance`. Local `.rbxjson` files are updated every ~30s by auto-extract. If precision matters (e.g., the user just moved a Part), prefer MCP reads.
+
+**File ownership**:
+- Rojo owns `.luau` files — always edit locally, never via MCP
+- RbxSync owns `.rbxjson` files — always edit locally, never via MCP
+
+### Backups
+
+Roxlit automatically backs up `.rbxjson` files before each Studio extract:
+- Location: `.roxlit/backups/<timestamp>/`
+- Each backup preserves the full `src/` directory structure
+- Maximum 20 backups retained (oldest are deleted)
+- Each backup has a `manifest.json` listing the files
+
+If the user reports lost changes to instances, check `.roxlit/backups/` for recent backups. You can diff the backup files against current files to find what changed.
+
+"#
+    } else {
+        r#"
+## RbxSync (Instance Sync)
+
+This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync provides **bidirectional sync for all instances** (Parts, GUIs, Models, etc.).
+
+### How it works
+
+- **Rojo**: Syncs `src/` Luau scripts to the Roblox DataModel (filesystem → Studio). Handles: ServerScriptService, ReplicatedStorage, StarterPlayerScripts
+- **RbxSync**: Syncs instances bidirectionally (Studio ↔ filesystem as `.rbxjson` files). Handles: Workspace, Lighting, SoundService, StarterGui, StarterPack, ServerStorage, and other non-script services
+- Both run simultaneously with no overlap — configured via `rbxsync.json` which excludes services Rojo manages
+
+### IMPORTANT: Activating the RbxSync Plugin
+
+The RbxSync plugin must be activated **once per Studio session**:
+1. If this is the first time after installation, **restart Roblox Studio** so it loads the new plugin
+2. Go to the Plugins tab
+3. Find the RbxSync plugin and click "Sync" or "Connect"
+4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically in the project directory)
+
+If the user reports that the RbxSync plugin doesn't appear, they need to restart Studio. Plugins are only loaded when Studio starts.
+If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
+
+### Working with Instances
+
+- Instance properties are stored as `.rbxjson` files in the project directory
+- You can read and modify these files to change Part positions, GUI layouts, etc.
+- Changes sync automatically to Studio when RbxSync is running
+- **Always edit local files** (`.luau` for scripts, `.rbxjson` for instances) — never modify them through other means
+
+### RbxSync File Structure
+
+Instances are stored under `src/` mirroring the Roblox DataModel hierarchy:
+
+```
+src/
+  Workspace/
+    SpawnLocation/          ← Folder name = instance name
+      _meta.rbxjson         ← Class + properties of SpawnLocation
+      Decal.rbxjson         ← Child instance (simple, no children of its own)
+    MyModel/
+      _meta.rbxjson         ← Class + properties of MyModel
+      Part1.rbxjson         ← Child Part
+      Part2/                ← Child with its own children → becomes a folder
+        _meta.rbxjson
+        SurfaceGui.rbxjson
+  Lighting/
+    _meta.rbxjson           ← Lighting service properties
+    Atmosphere.rbxjson      ← Post-processing effect
+```
+
+Rules:
+- **Instances with children** → folder with `_meta.rbxjson` inside (contains class + properties)
+- **Leaf instances** (no children) → single `.rbxjson` file
+- **`_meta.rbxjson`** always contains `""ClassName""` and `""Properties""` — edit properties here to change the instance
+- To find an instance, **search by folder/file name** in `src/`, not just in script directories
+- Changes to `.rbxjson` files sync to Studio automatically when RbxSync is running
+
+### Sync Workflow
+
+Roxlit manages sync automatically. Here's what you need to know:
+
+**Editing scripts (.luau)**: Just edit the files. Rojo syncs them to Studio in real-time.
+
+**Editing instances (.rbxjson)**: Just edit the files. Roxlit's auto-sync detects changes and runs `rbxsync sync` automatically (~2s delay).
+
+**Reading current Studio state**: Local `.rbxjson` files are updated every ~30s by auto-extract. If the user just made changes in Studio, ask them to wait for the next extract cycle or trigger a manual extract from the Roxlit launcher.
+
+**File ownership**:
+- Rojo owns `.luau` files — always edit locally
+- RbxSync owns `.rbxjson` files — always edit locally
+
+### Backups
+
+Roxlit automatically backs up `.rbxjson` files before each Studio extract:
+- Location: `.roxlit/backups/<timestamp>/`
+- Each backup preserves the full `src/` directory structure
+- Maximum 20 backups retained (oldest are deleted)
+- Each backup has a `manifest.json` listing the files
+
+If the user reports lost changes to instances, check `.roxlit/backups/` for recent backups. You can diff the backup files against current files to find what changed.
 
 "#
     };
