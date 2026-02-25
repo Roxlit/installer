@@ -9,64 +9,55 @@ on:
         type: string
 
 jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Validate version format
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Error: Version must be in X.Y.Z format"
-            exit 1
-          fi
-
-  bump-version:
-    needs: validate
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Update version in Cargo.toml
-        env:
-          VERSION: ${{ inputs.version }}
-        run: sed -i "0,/^version = \"/s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
-
-      - name: Update version in tauri.conf.json
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          tmp=$(mktemp)
-          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > "$tmp" && mv "$tmp" src-tauri/tauri.conf.json
-
-      - name: Update version in package.json
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          tmp=$(mktemp)
-          jq --arg v "$VERSION" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
-
-      - name: Commit and push version bump
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json
-          git commit -m "chore: bump version to $VERSION"
-          git push
-
   build-and-release:
-    needs: bump-version
     runs-on: windows-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
+
+      - name: Validate version format
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Error "Version must be in X.Y.Z format"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Update version in Cargo.toml
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          cd src-tauri
+          $lines = Get-Content Cargo.toml
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^version = "') {
+              $lines[$i] = "version = `"$env:VERSION`""
+              break
+            }
+          }
+          $lines | Set-Content Cargo.toml
+        shell: pwsh
+
+      - name: Update version in tauri.conf.json
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $conf = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $conf.version = "$env:VERSION"
+          $conf | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+        shell: pwsh
+
+      - name: Update version in package.json
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $pkg.version = "$env:VERSION"
+          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json
+        shell: pwsh
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -94,3 +85,14 @@ jobs:
           releaseName: Roxlit v${{ inputs.version }}
           releaseDraft: false
           prerelease: false
+
+      - name: Commit version bump
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json
+          git commit -m "chore: bump version to $env:VERSION"
+          git push
+        shell: pwsh
