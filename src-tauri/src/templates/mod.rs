@@ -189,10 +189,10 @@ RbxSync periodically extracts instances from Studio to local `.rbxjson` files. T
 
 ### RbxSync File Structure
 
-Instances are cached under `src/` mirroring the Roblox DataModel hierarchy:
+Instances are cached under `instances/` mirroring the Roblox DataModel hierarchy:
 
 ```
-src/
+instances/
   Workspace/
     SpawnLocation/          ← Folder name = instance name
       _meta.rbxjson         ← Class + properties of SpawnLocation
@@ -212,26 +212,26 @@ Rules:
 - **Instances with children** → folder with `_meta.rbxjson` inside (contains class + properties)
 - **Leaf instances** (no children) → single `.rbxjson` file
 - **`_meta.rbxjson`** contains `""ClassName""` and `""Properties""`
-- To find an instance, **search by folder/file name** in `src/`
+- To find an instance, **search by folder/file name** in `instances/`
 - These files are **read-only cache** — use MCP to modify instances
 
 ### Sync Workflow
 
-**Editing scripts (.luau)**: Edit local files. Rojo syncs to Studio in real-time.
+**Editing scripts (.luau)**: Edit local files in `src/`. Rojo syncs to Studio in real-time.
 
-**Editing instances**: Use MCP tools. Changes apply instantly in Studio. Local `.rbxjson` files update on the next auto-extract (~30s).
+**Editing instances**: Use MCP tools. Changes apply instantly in Studio. Local `.rbxjson` files in `instances/` update on the next auto-extract (~30s).
 
 **Reading instances**: Use MCP `get_instance` for real-time data. Use local `.rbxjson` files only for exploration/browsing.
 
 **File ownership**:
-- Rojo owns `.luau` files — always edit locally
+- Rojo owns `.luau` files in `src/` — always edit locally
 - MCP owns instance editing — always use MCP tools, never edit `.rbxjson` directly
 
 ### Backups
 
 Roxlit automatically backs up `.rbxjson` files before each Studio extract:
 - Location: `.roxlit/backups/<timestamp>/`
-- Each backup preserves the full `src/` directory structure
+- Each backup preserves the full `instances/` directory structure
 - Maximum 20 backups retained (oldest are deleted)
 - Each backup has a `manifest.json` listing the files
 
@@ -272,10 +272,10 @@ If the user reports that instance sync isn't working, remind them to activate th
 
 ### RbxSync File Structure
 
-Instances are stored under `src/` mirroring the Roblox DataModel hierarchy:
+Instances are stored under `instances/` mirroring the Roblox DataModel hierarchy:
 
 ```
-src/
+instances/
   Workspace/
     SpawnLocation/          ← Folder name = instance name
       _meta.rbxjson         ← Class + properties of SpawnLocation
@@ -295,24 +295,24 @@ Rules:
 - **Instances with children** → folder with `_meta.rbxjson` inside (contains class + properties)
 - **Leaf instances** (no children) → single `.rbxjson` file
 - **`_meta.rbxjson`** contains `""ClassName""` and `""Properties""` — edit properties here to change the instance
-- To find an instance, **search by folder/file name** in `src/`
+- To find an instance, **search by folder/file name** in `instances/`
 - Changes to `.rbxjson` files sync to Studio automatically when RbxSync is running
 
 ### Sync Workflow
 
-**Editing scripts (.luau)**: Edit local files. Rojo syncs to Studio in real-time.
+**Editing scripts (.luau)**: Edit local files in `src/`. Rojo syncs to Studio in real-time.
 
-**Editing instances (.rbxjson)**: Edit local files. RbxSync syncs to Studio (~2s). **But beware**: local files may be up to 30s stale. Before editing, ask the user to confirm the current state in Studio or trigger a manual extract.
+**Editing instances (.rbxjson)**: Edit local files in `instances/`. RbxSync syncs to Studio (~2s). **But beware**: local files may be up to 30s stale. Before editing, ask the user to confirm the current state in Studio or trigger a manual extract.
 
 **File ownership**:
-- Rojo owns `.luau` files — always edit locally
-- RbxSync owns `.rbxjson` files — edit locally, but verify state before editing
+- Rojo owns `.luau` files in `src/` — always edit locally
+- RbxSync owns `.rbxjson` files in `instances/` — edit locally, but verify state before editing
 
 ### Backups
 
 Roxlit automatically backs up `.rbxjson` files before each Studio extract:
 - Location: `.roxlit/backups/<timestamp>/`
-- Each backup preserves the full `src/` directory structure
+- Each backup preserves the full `instances/` directory structure
 - Maximum 20 backups retained (oldest are deleted)
 - Each backup has a `manifest.json` listing the files
 
@@ -351,7 +351,7 @@ src/
 
 **Creating scripts**: Always create `.luau` files. Rojo syncs them to Studio in real-time regardless of which service they're in. NEVER create a `.rbxjson` file for a script — scripts are always `.luau`.
 
-**Instances** (Parts, GUIs, Models, etc.): Managed by RbxSync. Local `.rbxjson` files in `src/` are a **cache** of what's in Studio — they are periodically extracted (~30s) and may be stale. See the RbxSync section below for how to read and edit instances correctly.
+**Instances** (Parts, GUIs, Models, etc.): Managed by RbxSync. Local `.rbxjson` files in `instances/` are a **cache** of what's in Studio — they are periodically extracted (~30s) and may be stale. See the RbxSync section below for how to read and edit instances correctly.
 
 ## File Naming Conventions
 

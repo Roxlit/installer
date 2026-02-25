@@ -105,13 +105,21 @@ pub async fn start_rbxsync(
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("my-game");
-        let _ = std::fs::write(&rbxsync_json, crate::templates::rbxsync_json(name));
+        std::fs::write(&rbxsync_json, crate::templates::rbxsync_json(name))
+            .map_err(|e| InstallerError::Custom(format!(
+                "Failed to write rbxsync.json at {}: {e}",
+                rbxsync_json.display()
+            )))?;
     }
 
     // Ensure instances/ directory exists for RbxSync
     let instances_dir = project_dir.join("instances");
     if !instances_dir.exists() {
-        let _ = std::fs::create_dir_all(&instances_dir);
+        std::fs::create_dir_all(&instances_dir)
+            .map_err(|e| InstallerError::Custom(format!(
+                "Failed to create instances/ directory at {}: {e}",
+                instances_dir.display()
+            )))?;
     }
 
     // Kill any orphaned rbxsync process holding the port from a previous session

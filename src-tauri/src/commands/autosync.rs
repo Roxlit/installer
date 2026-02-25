@@ -454,7 +454,7 @@ pub async fn start_auto_sync(
             // Create backup
             let backup_path = match create_backup(&poller_project) {
                 Ok(p) if p.is_empty() => {
-                    // No src/ dir, skip extraction
+                    // No instances/ dir, skip extraction
                     continue;
                 }
                 Ok(p) => p,
