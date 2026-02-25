@@ -111,8 +111,34 @@ pub async fn start_rojo(
             )))?;
     }
 
+    // Migrate legacy projects: move .luau files from src/ to scripts/
+    let scripts_dir = project_dir.join("scripts");
+    let legacy_src = project_dir.join("src");
+    if !scripts_dir.exists() && legacy_src.exists() {
+        // Check if src/ has any .luau files (legacy layout)
+        let has_luau = has_luau_files(&legacy_src);
+        if has_luau {
+            let _ = std::fs::create_dir_all(&scripts_dir);
+            move_luau_tree(&legacy_src, &scripts_dir);
+        }
+    }
+
     let project_json = project_dir.join("default.project.json");
-    if !project_json.exists() {
+    // Rewrite project.json if it still references src/ for scripts
+    if project_json.exists() {
+        if let Ok(content) = std::fs::read_to_string(&project_json) {
+            if content.contains("\"src/ServerScriptService\"")
+                || content.contains("\"src/StarterPlayer")
+                || content.contains("\"src/ReplicatedStorage\"")
+            {
+                let name = project_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("my-game");
+                let _ = std::fs::write(&project_json, crate::templates::project_json(name));
+            }
+        }
+    } else {
         let name = project_dir
             .file_name()
             .and_then(|n| n.to_str())
@@ -123,17 +149,33 @@ pub async fn start_rojo(
             )))?;
     }
 
-    // Ensure project directories exist (user may have deleted src/)
+    // Update .rbxsyncignore to include scripts/ if missing
+    let rbxsyncignore = project_dir.join(".rbxsyncignore");
+    if rbxsyncignore.exists() {
+        if let Ok(content) = std::fs::read_to_string(&rbxsyncignore) {
+            if !content.contains("scripts/") {
+                let _ = std::fs::write(
+                    &rbxsyncignore,
+                    format!("{}scripts/\n", content),
+                );
+            }
+        }
+    }
+
+    // Regenerate AI context if it still references the old src/ layout
+    regenerate_ai_context_if_stale(project_dir, &project_path);
+
+    // Ensure project directories exist (user may have deleted scripts/)
     for subdir in &[
-        "src/ServerScriptService",
-        "src/StarterPlayer/StarterPlayerScripts",
-        "src/StarterPlayer/StarterCharacterScripts",
-        "src/ReplicatedStorage",
-        "src/ReplicatedFirst",
-        "src/ServerStorage",
-        "src/Workspace",
-        "src/StarterGui",
-        "src/StarterPack",
+        "scripts/ServerScriptService",
+        "scripts/StarterPlayer/StarterPlayerScripts",
+        "scripts/StarterPlayer/StarterCharacterScripts",
+        "scripts/ReplicatedStorage",
+        "scripts/ReplicatedFirst",
+        "scripts/ServerStorage",
+        "scripts/Workspace",
+        "scripts/StarterGui",
+        "scripts/StarterPack",
     ] {
         let dir = project_dir.join(subdir);
         if !dir.exists() {
@@ -326,6 +368,93 @@ fn parse_rojo_port(line: &str) -> Option<u16> {
         }
     }
     None
+}
+
+/// Check recursively if a directory contains any .luau files.
+fn has_luau_files(dir: &std::path::Path) -> bool {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if has_luau_files(&path) {
+                    return true;
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("luau") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Move .luau files from src/ to scripts/, preserving directory structure.
+/// Only moves .luau files — .rbxjson files stay in src/ for rbxsync.
+fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
+    if let Ok(entries) = std::fs::read_dir(src) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if path.is_dir() {
+                let sub_dest = dest.join(&name);
+                let _ = std::fs::create_dir_all(&sub_dest);
+                move_luau_tree(&path, &sub_dest);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("luau") {
+                let dest_file = dest.join(&name);
+                // Move = copy + delete (works across filesystems)
+                if std::fs::copy(&path, &dest_file).is_ok() {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+}
+
+/// Regenerate AI context files if they still reference the old `src/` layout for scripts.
+/// Reads ~/.roxlit/config.json to find the AI tool for this project.
+fn regenerate_ai_context_if_stale(project_dir: &std::path::Path, project_path: &str) {
+    // Detect which AI context file exists and check if it's stale
+    let context_files = [
+        "CLAUDE.md",
+        ".cursorrules",
+        ".windsurfrules",
+        ".github/copilot-instructions.md",
+        "AI-CONTEXT.md",
+    ];
+
+    let needs_update = context_files.iter().any(|f| {
+        let path = project_dir.join(f);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            // Old layout had "Write Luau code in `src/`" — new says `scripts/`
+            content.contains("Write Luau code in `src/`")
+                || content.contains("Edit local files in `src/`. Rojo syncs")
+        } else {
+            false
+        }
+    });
+
+    if !needs_update {
+        return;
+    }
+
+    // Read config to find ai_tool for this project
+    let ai_tool = dirs::home_dir()
+        .and_then(|h| std::fs::read_to_string(h.join(".roxlit").join("config.json")).ok())
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|config| {
+            config["projects"]
+                .as_array()?
+                .iter()
+                .find(|p| p["path"].as_str() == Some(project_path))
+                .and_then(|p| p["aiTool"].as_str().map(String::from))
+        })
+        .unwrap_or_else(|| "claude".to_string());
+
+    let project_name = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("my-game");
+
+    let _ = crate::commands::context::generate_context(project_path, &ai_tool, project_name);
 }
 
 /// Kill orphaned rojo processes from a previous session that may still hold the port.

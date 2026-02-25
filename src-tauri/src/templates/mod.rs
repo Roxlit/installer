@@ -11,7 +11,7 @@ pub fn project_json(project_name: &str) -> String {
     "ServerScriptService": {{
       "$className": "ServerScriptService",
       "$ignoreUnknownInstances": true,
-      "$path": "src/ServerScriptService"
+      "$path": "scripts/ServerScriptService"
     }},
     "StarterPlayer": {{
       "$className": "StarterPlayer",
@@ -19,43 +19,43 @@ pub fn project_json(project_name: &str) -> String {
       "StarterPlayerScripts": {{
         "$className": "StarterPlayerScripts",
         "$ignoreUnknownInstances": true,
-        "$path": "src/StarterPlayer/StarterPlayerScripts"
+        "$path": "scripts/StarterPlayer/StarterPlayerScripts"
       }},
       "StarterCharacterScripts": {{
         "$className": "StarterCharacterScripts",
         "$ignoreUnknownInstances": true,
-        "$path": "src/StarterPlayer/StarterCharacterScripts"
+        "$path": "scripts/StarterPlayer/StarterCharacterScripts"
       }}
     }},
     "ReplicatedStorage": {{
       "$className": "ReplicatedStorage",
       "$ignoreUnknownInstances": true,
-      "$path": "src/ReplicatedStorage"
+      "$path": "scripts/ReplicatedStorage"
     }},
     "ReplicatedFirst": {{
       "$className": "ReplicatedFirst",
       "$ignoreUnknownInstances": true,
-      "$path": "src/ReplicatedFirst"
+      "$path": "scripts/ReplicatedFirst"
     }},
     "ServerStorage": {{
       "$className": "ServerStorage",
       "$ignoreUnknownInstances": true,
-      "$path": "src/ServerStorage"
+      "$path": "scripts/ServerStorage"
     }},
     "Workspace": {{
       "$className": "Workspace",
       "$ignoreUnknownInstances": true,
-      "$path": "src/Workspace"
+      "$path": "scripts/Workspace"
     }},
     "StarterGui": {{
       "$className": "StarterGui",
       "$ignoreUnknownInstances": true,
-      "$path": "src/StarterGui"
+      "$path": "scripts/StarterGui"
     }},
     "StarterPack": {{
       "$className": "StarterPack",
       "$ignoreUnknownInstances": true,
-      "$path": "src/StarterPack"
+      "$path": "scripts/StarterPack"
     }}
   }}
 }}
@@ -165,9 +165,10 @@ If the user reports that instance sync isn't working, remind them to activate th
 ### MCP Tools — Primary Way to Work with Instances
 
 **Writing:**
-- **Scripts** → always edit local `.luau` files (Rojo syncs to Studio in real-time)
+- **Scripts** → always edit local `.luau` files in `scripts/` (Rojo syncs to Studio in real-time)
 - **Instances** → use MCP tools (`create_instance`, `set_property`, `delete_instance`, etc.) — changes apply instantly in Studio
 - **Never edit local `.rbxjson` files directly** — they are auto-generated cache and will be overwritten by the next Studio extract
+- **Never create files in `src/`** — rbxsync overwrites it periodically
 
 **Reading:**
 - **Specific instance** → use MCP `get_instance` (always fresh, real-time from Studio)
@@ -218,15 +219,16 @@ Rules:
 
 ### Sync Workflow
 
-**Editing scripts (.luau)**: Edit local files in `src/`. Rojo syncs to Studio in real-time.
+**Editing scripts (.luau)**: Edit local files in `scripts/`. Rojo syncs to Studio in real-time.
 
 **Editing instances**: Use MCP tools. Changes apply instantly in Studio. Local `.rbxjson` files in `src/` update on the next auto-extract (~30s).
 
 **Reading instances**: Use MCP `get_instance` for real-time data. Use local `.rbxjson` files only for exploration/browsing.
 
 **File ownership**:
-- Rojo owns `.luau` files — always edit locally
+- Rojo owns `.luau` files in `scripts/` — always edit locally
 - MCP owns instance editing — always use MCP tools, never edit `.rbxjson` directly
+- `src/` is rbxsync's domain — never create or edit files there manually
 
 ### Backups
 
@@ -302,13 +304,14 @@ Rules:
 
 ### Sync Workflow
 
-**Editing scripts (.luau)**: Edit local files in `src/`. Rojo syncs to Studio in real-time.
+**Editing scripts (.luau)**: Edit local files in `scripts/`. Rojo syncs to Studio in real-time.
 
 **Editing instances (.rbxjson)**: Edit local files in `src/`. RbxSync syncs to Studio (~2s). **But beware**: local files may be up to 30s stale. Before editing, ask the user to confirm the current state in Studio or trigger a manual extract.
 
 **File ownership**:
-- Rojo owns `.luau` files — always edit locally
-- RbxSync owns `.rbxjson` files — edit locally, but verify state before editing
+- Rojo owns `.luau` files in `scripts/` — always edit locally
+- RbxSync owns `.rbxjson` files in `src/` — edit locally, but verify state before editing
+- `src/` is rbxsync's domain — never create or edit `.luau` files there
 
 ### Backups
 
@@ -326,7 +329,7 @@ If the user reports lost changes to instances, check `.roxlit/backups/` for rece
     format!(
         r#"# {project_name}
 
-Roblox game project using Rojo for file syncing. Write Luau code in `src/` and Rojo syncs it to Roblox Studio in real time.
+Roblox game project using Rojo for file syncing. Write Luau code in `scripts/` and Rojo syncs it to Roblox Studio in real time.
 
 ## Tech Stack
 
@@ -338,7 +341,7 @@ Roblox game project using Rojo for file syncing. Write Luau code in `src/` and R
 ## Project Structure
 
 ```
-src/
+scripts/                                ← Luau scripts (synced by Rojo to Studio)
   ServerScriptService/                  → Server scripts
   StarterPlayer/
     StarterPlayerScripts/               → Client scripts (player join)
@@ -349,11 +352,15 @@ src/
   Workspace/                            → 3D world + scripts in Parts/Models
   StarterGui/                           → GUI templates + LocalScripts
   StarterPack/                          → Starter tools + scripts
+src/                                    ← Instance cache (.rbxjson, managed by RbxSync)
+  Workspace/
+  Lighting/
+  ...
 ```
 
-**Creating scripts**: Always create `.luau` files. Rojo syncs them to Studio in real-time regardless of which service they're in. NEVER create a `.rbxjson` file for a script — scripts are always `.luau`.
+**Creating scripts**: Create `.luau` files in `scripts/` — Rojo syncs them to Studio in real-time. NEVER create a `.rbxjson` file for a script — scripts are always `.luau`. NEVER create files in `src/` — rbxsync overwrites it periodically.
 
-**Instances** (Parts, GUIs, Models, etc.): Managed by RbxSync. Local `.rbxjson` files in `src/` are a **cache** of what's in Studio — they are periodically extracted (~30s) and may be stale. Rojo ignores `.rbxjson` files so both coexist. See the RbxSync section below for how to read and edit instances correctly.
+**Instances** (Parts, GUIs, Models, etc.): Managed by RbxSync. Local `.rbxjson` files in `src/` are a **read-only cache** from RbxSync — they are periodically extracted (~30s) and may be stale. Rojo ignores `.rbxjson` files so both coexist. See the RbxSync section below for how to read and edit instances correctly.
 
 ## File Naming Conventions
 

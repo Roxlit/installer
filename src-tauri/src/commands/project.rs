@@ -8,15 +8,15 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
     let root = Path::new(project_path);
 
     // Create directory tree (all services where Roblox allows scripts)
-    fs::create_dir_all(root.join("src").join("ServerScriptService"))?;
-    fs::create_dir_all(root.join("src").join("StarterPlayer").join("StarterPlayerScripts"))?;
-    fs::create_dir_all(root.join("src").join("StarterPlayer").join("StarterCharacterScripts"))?;
-    fs::create_dir_all(root.join("src").join("ReplicatedStorage"))?;
-    fs::create_dir_all(root.join("src").join("ReplicatedFirst"))?;
-    fs::create_dir_all(root.join("src").join("ServerStorage"))?;
-    fs::create_dir_all(root.join("src").join("Workspace"))?;
-    fs::create_dir_all(root.join("src").join("StarterGui"))?;
-    fs::create_dir_all(root.join("src").join("StarterPack"))?;
+    fs::create_dir_all(root.join("scripts").join("ServerScriptService"))?;
+    fs::create_dir_all(root.join("scripts").join("StarterPlayer").join("StarterPlayerScripts"))?;
+    fs::create_dir_all(root.join("scripts").join("StarterPlayer").join("StarterCharacterScripts"))?;
+    fs::create_dir_all(root.join("scripts").join("ReplicatedStorage"))?;
+    fs::create_dir_all(root.join("scripts").join("ReplicatedFirst"))?;
+    fs::create_dir_all(root.join("scripts").join("ServerStorage"))?;
+    fs::create_dir_all(root.join("scripts").join("Workspace"))?;
+    fs::create_dir_all(root.join("scripts").join("StarterGui"))?;
+    fs::create_dir_all(root.join("scripts").join("StarterPack"))?;
 
     // Aftman tool manifest (tells aftman which rojo version to use)
     fs::write(
@@ -35,17 +35,17 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
 
     // Starter scripts so the project isn't empty
     fs::write(
-        root.join("src").join("ServerScriptService").join("main.server.luau"),
+        root.join("scripts").join("ServerScriptService").join("main.server.luau"),
         templates::server_script(),
     )?;
 
     fs::write(
-        root.join("src").join("StarterPlayer").join("StarterPlayerScripts").join("main.client.luau"),
+        root.join("scripts").join("StarterPlayer").join("StarterPlayerScripts").join("main.client.luau"),
         templates::client_script(),
     )?;
 
     fs::write(
-        root.join("src").join("ReplicatedStorage").join("Shared.luau"),
+        root.join("scripts").join("ReplicatedStorage").join("Shared.luau"),
         templates::shared_module(),
     )?;
 
@@ -58,7 +58,7 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
     // RbxSync ignore file
     fs::write(
         root.join(".rbxsyncignore"),
-        ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\n",
+        ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nscripts/\n",
     )?;
 
     Ok(())

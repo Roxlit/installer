@@ -122,8 +122,8 @@ fn collect_luau_files(dir: &Path) -> Vec<PathBuf> {
 
 /// Snapshot all .luau file contents before extract so we can restore them after.
 pub(crate) fn snapshot_luau_files(project_path: &str) -> HashMap<PathBuf, Vec<u8>> {
-    let src_dir = Path::new(project_path).join("src");
-    let files = collect_luau_files(&src_dir);
+    let scripts_dir = Path::new(project_path).join("scripts");
+    let files = collect_luau_files(&scripts_dir);
     let mut snapshot = HashMap::new();
     for file in files {
         if let Ok(content) = std::fs::read(&file) {
