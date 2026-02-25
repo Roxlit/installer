@@ -89,8 +89,15 @@ pub async fn start_rbxsync(
     let rbxsync = rbxsync_bin_path();
     let project_path = expand_tilde(&project_path);
 
-    // Ensure rbxsync.json exists
+    // Ensure project directory exists (may have been deleted)
     let project_dir = std::path::Path::new(&project_path);
+    if !project_dir.exists() {
+        std::fs::create_dir_all(project_dir).map_err(|e| {
+            InstallerError::Custom(format!("Failed to create project directory: {e}"))
+        })?;
+    }
+
+    // Ensure rbxsync.json exists
     let rbxsync_json = project_dir.join("rbxsync.json");
     if !rbxsync_json.exists() {
         let name = project_dir
