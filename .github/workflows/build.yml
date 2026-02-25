@@ -2,6 +2,8 @@ name: Build Roxlit
 
 on:
   push:
+    branches: [main, dev]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -26,6 +28,12 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Type check frontend
+        run: npx tsc --noEmit
+
+      - name: Check Rust
+        run: cd src-tauri && cargo check
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
