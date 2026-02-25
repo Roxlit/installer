@@ -92,6 +92,9 @@ pub async fn start_rojo(
     let rojo = rojo_bin_path();
     let project_path = expand_tilde(&project_path);
 
+    // Kill any orphaned rojo process holding the port from a previous session
+    kill_orphaned_rojo().await;
+
     // Ensure essential config files exist (may be missing if project predates current version)
     let project_dir = std::path::Path::new(&project_path);
 
@@ -312,4 +315,25 @@ fn parse_rojo_port(line: &str) -> Option<u16> {
         }
     }
     None
+}
+
+/// Kill orphaned rojo processes from a previous session that may still hold the port.
+async fn kill_orphaned_rojo() {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = tokio::process::Command::new("taskkill");
+        cmd.args(["/F", "/IM", "rojo.exe"])
+            .creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.output().await;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut cmd = tokio::process::Command::new("pkill");
+        cmd.args(["-f", "rojo serve"]);
+        let _ = cmd.output().await;
+    }
+
+    // Give the OS time to release the port
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 }

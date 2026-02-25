@@ -89,10 +89,18 @@ pub async fn start_rbxsync(
     let rbxsync = rbxsync_bin_path();
     let project_path = expand_tilde(&project_path);
 
-    // Ensure rbxsync.json exists (without it, RbxSync defaults to ./src and deletes .luau files)
+    // Ensure rbxsync.json exists and points to ./instances (not ./src which would delete .luau files)
     let project_dir = std::path::Path::new(&project_path);
     let rbxsync_json = project_dir.join("rbxsync.json");
-    if !rbxsync_json.exists() {
+    let needs_update = if rbxsync_json.exists() {
+        // Check if existing config still points to ./src (old version)
+        std::fs::read_to_string(&rbxsync_json)
+            .map(|content| content.contains("\"./src\""))
+            .unwrap_or(true)
+    } else {
+        true
+    };
+    if needs_update {
         let name = project_dir
             .file_name()
             .and_then(|n| n.to_str())
