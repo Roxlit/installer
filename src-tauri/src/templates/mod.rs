@@ -458,7 +458,7 @@ end
 1. **Client-server model**: The server is authoritative. Properties set on the server replicate to clients, not vice versa.
 2. **Filtering Enabled**: Clients cannot directly modify the server's state. Use RemoteEvents/RemoteFunctions for communication.
 3. **Player lifecycle**: Use `Players.PlayerAdded` for setup and `Players.PlayerRemoving` for cleanup/saving.
-4. **Testing**: Use Studio's "Run" mode (server + client) for networking tests, not "Play Solo".
+4. **Testing**: Press Play (F5) for server + client testing, Run (F8) for server-only. Read `.roxlit/context/studio-ui.md` before guiding users through Studio's interface.
 {rbxsync_section}## Roblox Context Packs
 
 This project includes curated Roblox documentation in `.roxlit/context/`. Before writing code that involves a specific system, **read the relevant file**:
@@ -469,7 +469,7 @@ This project includes curated Roblox documentation in `.roxlit/context/`. Before
 - `.roxlit/context/workspace-physics.md` — Parts, CFrame operations, raycasting, collision groups
 - `.roxlit/context/replication.md` — What replicates, FilteringEnabled, client vs server
 - `.roxlit/context/services-reference.md` — Service properties, enums, valid ranges
-- `.roxlit/context/studio-ui.md` — **READ THIS when helping with Studio UI**: panel locations, testing modes, localized names (Spanish etc.), common user issues
+- `.roxlit/context/studio-ui.md` — **READ THIS before giving ANY Studio UI directions**: where panels are (Output, Explorer, etc.), mezzanine/toolbar layout, testing modes (F5/F8), troubleshooting ("my script isn't running")
 
 Read `.roxlit/context/index.md` for an overview of all available packs.
 

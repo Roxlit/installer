@@ -857,114 +857,127 @@ local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
 }
 
 /// Roblox Studio UI: panel locations, testing modes, localization, troubleshooting.
+/// Source: https://create.roblox.com/docs/studio/ui-overview (verified Feb 2026)
 pub fn studio_ui() -> &'static str {
     r#"# Roblox Studio UI
 
-## Localization
+> Source: [Studio Interface docs](https://create.roblox.com/docs/studio/ui-overview) — verified Feb 2026, new Flexible UI (default since Jan 2026).
 
-**Studio may be in Spanish or another language.** Do NOT assume English UI labels. Always mention both the English name and common translations when guiding users.
+## How to Guide Users
 
-| English | Spanish | Portuguese |
-|---------|---------|------------|
-| Output | Salida | Saída |
-| View | Vista | Exibir |
-| Explorer | Explorador | Explorador |
-| Properties | Propiedades | Propriedades |
-| Script (tab) | Secuencia de comandos | Script |
-| Plugins | Complementos | Plugins |
-| Home | Inicio | Início |
-| Play | Jugar / Probar | Jogar |
-| Run | Ejecutar | Executar |
-| Stop | Detener | Parar |
-| Command Bar | Barra de comandos | Barra de comandos |
+**Studio may be in ANY language.** Do NOT assume English labels or guess translations. Instead:
+1. **Describe by position**: "at the top-left of the mezzanine" not just "the Play button"
+2. **Describe by function**: "the panel where print() messages appear (Output)"
+3. **Use landmarks**: "next to the Script tab, in the center of the mezzanine"
+4. **Respond in the user's language** — if they write in Spanish, respond in Spanish. If English, respond in English.
 
-## Panel Locations
+## Studio Layout — Three Zones at the Top
 
-### Output / Salida
-Where `print()` and `warn()` messages appear.
+The top of Studio has three distinct areas. Understanding these helps you give precise directions.
 
-**How to open:**
-- **Script tab** (top ribbon, center section) → click "Output" / "Salida"
-- OR: **View tab** → "Output" / "Salida"
-- The panel typically appears at the bottom of the screen
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ▶ Play/Test    │  Home  Model  Avatar  UI  Script  Plugins │  👤  │  ← MEZZANINE
+│   controls      │            (tool tabs)                    │ acct │
+├─────────────────┴───────────────────────────────────────────┴──────┤
+│  [Icon] [Icon] [Icon] [Icon]  ...  [Output] [Cmd Bar]             │  ← TOOLBAR
+│  (buttons change based on which tab is selected above)             │
+└────────────────────────────────────────────────────────────────────┘
+```
 
-### Explorer / Explorador
-Shows the full DataModel tree (all instances in the game).
+### 1. Mezzanine (the top bar)
+The horizontal bar at the very top of Studio. Contains three sections:
+- **Left**: Play/test controls (Play, Run, Stop) — always visible regardless of tab
+- **Center**: The 6 default tool tabs — Home, Model, Avatar, UI, Script, Plugins
+- **Right**: Collaboration, sharing, Assistant, notifications, account
 
-**How to open:**
-- **View tab** → "Explorer" / "Explorador"
-- Typically docked on the right side
+### 2. Toolbar (below the mezzanine)
+The row of **icon buttons** that changes based on which tab is selected. For example:
+- Select the **Script** tab → toolbar shows: script tools, Output button, Command Bar button, Script Analysis
+- Select the **Home** tab → toolbar shows: Move, Scale, Rotate, Part insertion, etc.
 
-### Properties / Propiedades
-Shows properties of the currently selected instance.
+### 3. Window menu
+A separate menu (not a tab) for opening/closing panels like Output, Explorer, Properties. Access it from the top menu area. This replaced the old "View" tab — **there is no View tab in the new UI**.
 
-**How to open:**
-- **View tab** → "Properties" / "Propiedades"
-- Typically docked on the right side, below Explorer
+## How to Open Key Panels
 
-### Command Bar / Barra de comandos
-Execute Luau code directly in Studio (like a REPL).
+### Output
+Where `print()` and `warn()` messages appear. Shows script errors and engine messages.
 
-**How to open:**
-- **View tab** → "Command Bar" / "Barra de comandos"
-- Appears at the very bottom of the screen
+**How to find it:**
+1. Click the **Script** tab (center of the mezzanine) → in the toolbar below, look for the **Output** button
+2. OR: open the **Window** menu → Script → Output
+- Output typically docks at the **bottom** of the screen
 
-### Script Analysis / Análisis de scripts
-Shows Luau static analysis warnings and errors.
+### Command Bar
+Execute Luau code directly (like a REPL). Useful for quick tests.
 
-**How to open:**
-- **Script tab** → "Script Analysis" / "Análisis de scripts"
+**How to find it:**
+1. Click the **Script** tab → in the toolbar, look for **Command Bar**
+2. OR: **Window** menu → Script → Command Bar
+3. OR: keyboard shortcut **Ctrl+9** (Windows) / **Cmd+9** (Mac)
+- Command Bar appears at the **very bottom** of the screen, below Output
+
+### Explorer
+Shows the full DataModel hierarchy (every instance in the game).
+
+- **Visible by default** (right side of screen)
+- If closed: **Window** menu → Explorer, or **Home** tab toolbar
+- Docks on the **right side**
+
+### Properties
+Shows and edits properties of the selected instance.
+
+- **Visible by default** (right side, below Explorer)
+- If closed: **Window** menu → Properties, or **Home** tab toolbar
+
+### Script Analysis
+Luau static analysis — warnings, errors, type issues in your code.
+
+- Click the **Script** tab → look for **Script Analysis** in the toolbar
+- OR: **Window** menu → Script → Script Analysis
 
 ## Testing Modes
 
+**Scripts do NOT run in edit mode.** The user MUST start a test session first.
+
 | Mode | Shortcut | What it does |
 |------|----------|-------------|
-| **Play** | F5 | Starts local server + client. Required for testing scripts, RemoteEvents, player lifecycle |
-| **Run** | F8 | Starts only the server. Useful for server-side testing without a player joining |
-| **Stop** | Shift+F5 | Stops the current test session and returns to edit mode |
+| **Play** | **F5** | Starts local server + client. Required for RemoteEvents, player lifecycle |
+| **Run** | **F8** | Starts server only. For server-side testing without a player |
+| **Stop** | **Shift+F5** | Stops the test, returns to edit mode |
 
-**IMPORTANT:** Scripts do NOT run in edit mode. If a user says "my script isn't doing anything", the first question is: did you press Play (F5)?
+Play/Run/Stop controls are on the **left side of the mezzanine** — always visible no matter which tab is selected.
 
-"Play Solo" is a legacy mode — prefer Play (F5) for accurate client-server behavior.
-
-## Common User Issues & Solutions
+## Common User Issues
 
 ### "My script isn't running"
-1. They need to press **Play (F5)** — scripts don't run in edit mode
-2. Check the script is in the right service (server scripts in ServerScriptService, client scripts in StarterPlayerScripts)
-3. Check Output/Salida for errors — syntax errors prevent the script from loading
-4. Verify the script synced: check Explorer for the script under the correct service
+1. **Did you press Play (F5)?** — scripts don't execute in edit mode. The Play button is on the left side of the mezzanine (top-left of Studio)
+2. Check the script is in the correct service (server → ServerScriptService, client → StarterPlayerScripts)
+3. Open **Output** (Script tab → Output button in the toolbar) and look for errors
+4. Verify the script synced from Rojo: check Explorer for the script under the correct service
 
-### "I can't see print output"
-1. Output panel might be closed → guide them to **Script tab → Output/Salida**
-2. Make sure they're in Play mode (F5), not edit mode
-3. Check if the Output panel filter is set to show all messages (not just errors)
+### "I can't see print() output"
+1. **Output panel might be closed** → click Script tab, then the Output button in the toolbar below
+2. Make sure you pressed **Play (F5)** first — print() only runs during a test session
+3. Check the Output filter — it might be hiding non-error messages
 
-### "Changes aren't syncing from VS Code/editor to Studio"
-1. Check that Rojo is running (green status in Roxlit launcher)
-2. Check that the Rojo plugin is connected in Studio (Plugins tab → Rojo → should show "Connected")
-3. If the plugin shows "Not Connected": click the Rojo plugin button to reconnect
-4. If the plugin doesn't appear at all: restart Studio (plugins load on startup)
+### "I can't find [button/panel]"
+1. The ribbon is **fully customizable** — the user may have hidden or moved tabs
+2. Right-click the mezzanine to see customization options (show/hide tabs, add tools)
+3. Most panels can always be found via the **Window** menu regardless of tab layout
+4. If completely lost: right-click mezzanine → reset to default layout
 
-### "I connected but nothing happens in Studio"
-1. The Rojo plugin needs to be **activated manually** each Studio session
-2. Go to **Plugins tab** → find Rojo → click "Connect" or the Rojo icon
-3. A "Connected" indicator should appear
+### "Changes aren't syncing to Studio"
+1. Check Rojo is running (green status in Roxlit launcher)
+2. Check the **Rojo plugin is connected**: go to the Plugins tab (center of mezzanine) → Rojo button → should show "Connected"
+3. If "Not Connected": click the Rojo button to reconnect
+4. If the Rojo plugin doesn't appear: **restart Studio** (plugins only load on startup)
 
 ### "Instance sync (RbxSync) isn't working"
-1. The RbxSync plugin also needs activation each session: **Plugins tab → RbxSync → Sync/Connect**
-2. Roxlit must be running `rbxsync serve` (check launcher)
-3. If the plugin doesn't appear: restart Studio
-
-## Ribbon Tabs (Top Menu Bar)
-
-The Studio ribbon has these main tabs:
-- **Home/Inicio**: Basic tools (Select, Move, Scale, Rotate, Part insertion)
-- **Model/Modelo**: Advanced object manipulation, constraints, effects
-- **Test/Probar**: Play, Run, Stop, client/server switching
-- **View/Vista**: Toggle panels (Output, Explorer, Properties, Command Bar, etc.)
-- **Script/Secuencia de comandos**: Appears when a script is open — Script Analysis, Output shortcut
-- **Plugins/Complementos**: Installed plugins (Rojo, RbxSync, etc.)
+1. RbxSync plugin needs manual activation each session: **Plugins tab → RbxSync → Sync/Connect**
+2. Roxlit must be running `rbxsync serve` (check the launcher)
+3. If plugin doesn't appear: restart Studio
 "#
 }
 
