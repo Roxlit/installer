@@ -134,7 +134,7 @@ pub fn rbxsync_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.6.1";
+pub const CONTEXT_VERSION: &str = "0.6.2";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -418,7 +418,7 @@ This project includes curated Roblox documentation in `.roxlit/context/`. Before
 - `.roxlit/context/datastore.md` — DataStoreService: throttling limits, session locking, retry patterns
 - `.roxlit/context/remote-events.md` — RemoteEvent/Function: server validation, rate limiting, type checking
 - `.roxlit/context/player-lifecycle.md` — PlayerAdded, CharacterAdded, respawn, death handling
-- `.roxlit/context/workspace-physics.md` — Parts, CFrame operations, raycasting, collision groups
+- `.roxlit/context/workspace-physics.md` — Parts, CFrame, raycasting, collision groups, **cylinder orientations, vehicles (VehicleSeat + wheels), Z-fighting**
 - `.roxlit/context/replication.md` — What replicates, FilteringEnabled, client vs server
 - `.roxlit/context/services-reference.md` — Service properties, enums, valid ranges
 - `.roxlit/context/studio-ui.md` — **READ THIS before giving ANY Studio UI directions**: where panels are (Output, Explorer, etc.), mezzanine/toolbar layout, testing modes (F5/F8), troubleshooting ("my script isn't running")

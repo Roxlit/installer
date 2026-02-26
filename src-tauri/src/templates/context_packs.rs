@@ -488,6 +488,158 @@ pub fn workspace_physics() -> &'static str {
 | `Color` | Color3 | Use Color3.fromRGB() or Color3.fromHex() |
 | `Massless` | boolean | If true, doesn't contribute to assembly mass |
 
+## Part Shapes — Default Orientations
+
+Roblox shapes have specific default orientations. Getting these wrong causes wheels to stand upright, headlights to face sideways, etc.
+
+**Cylinder** (`Enum.PartType.Cylinder`):
+- Default `Orientation = (0, 0, 0)`: axis along **X** — circular faces point **left/right** (±X)
+- For **wheels**: use `(0, 0, 0)` — circular face visible from the side. This is already correct by default
+- For **headlights facing forward**: use `(0, -90, 0)` — circular face points along Z (forward)
+- For **pipes/columns standing upright**: use `(0, 0, 90)` — circular face points up/down
+
+```luau
+-- WHEEL (circular face points sideways ±X) — default orientation is correct
+wheel.Shape = Enum.PartType.Cylinder
+wheel.Orientation = Vector3.new(0, 0, 0)
+
+-- HEADLIGHT (circular face points forward ±Z)
+headlight.Shape = Enum.PartType.Cylinder
+headlight.Orientation = Vector3.new(0, -90, 0)
+
+-- COLUMN/PIPE (circular face points up ±Y)
+pipe.Shape = Enum.PartType.Cylinder
+pipe.Orientation = Vector3.new(0, 0, 90)
+```
+
+**Wedge** (`Enum.PartType.Wedge`):
+- Slope faces **+Z** direction by default
+
+**NEVER guess cylinder orientation — refer to this table.** The most common mistake is rotating wheels to `(0, -90, 90)` which makes them stand upright like columns.
+
+## Placement — NEVER Build at Origin
+
+The SpawnLocation is typically at or near `(0, 0, 0)`. **NEVER place new objects at the origin** — they will overlap with the spawn point.
+
+Always offset new constructions. For vehicles, furniture, buildings, etc., place them at least 20-30 studs away from the spawn:
+
+```luau
+-- BAD: Right on top of spawn
+model:PivotTo(CFrame.new(0, 0, 0))
+
+-- GOOD: Offset from spawn
+model:PivotTo(CFrame.new(30, 0, 20))
+```
+
+## Sounds and Asset IDs
+
+**NEVER invent or guess Roblox asset IDs.** Using a wrong ID causes `Failed to load sound: Asset type does not match requested type` at runtime.
+
+### How to find valid asset IDs
+
+**Search the web** for the sound you need. Use queries like:
+- `roblox car horn sound id site:robloxsong.com`
+- `roblox explosion sound effect id`
+- `roblox [description] sound id free`
+
+Reliable sources for Roblox sound IDs:
+- `robloxsong.com` — searchable database of audio IDs
+- `create.roblox.com` — official Roblox Creator Hub / Toolbox
+- `robloxden.com/music-codes` — categorized sound effects
+
+**ALWAYS search for real IDs — NEVER make one up.** If you cannot find a valid ID, create the Sound instance without SoundId and tell the user to find one in Studio's Toolbox.
+
+```luau
+-- BAD: Invented asset ID — will fail
+sound.SoundId = "rbxassetid://5765826065"
+
+-- GOOD: Searched and found a verified ID
+sound.SoundId = "rbxassetid://VERIFIED_ID_FROM_SEARCH"
+
+-- ALSO GOOD: If you can't find one, leave it for the user
+local sound = Instance.new("Sound")
+sound.Name = "Horn"
+sound.Parent = vehicleSeat
+-- Tell the user: "Find a horn sound in Studio's Toolbox and paste the asset ID"
+```
+
+This rule applies to ALL asset types: sounds, images, meshes, animations. Never guess any `rbxassetid://` ID.
+
+## Vehicles (VehicleSeat)
+
+Building vehicles requires precise setup. Common mistakes: seat facing wrong way, wheels not spinning, car not moving, player can't sit down.
+
+### VehicleSeat Orientation
+
+VehicleSeat faces **-Z by default** (LookVector points -Z). The front of the vehicle MUST align with the seat's -Z direction.
+
+```luau
+-- The seat's LookVector (-Z) = forward direction of the vehicle
+-- Make sure the car body is built so -Z is the front
+vehicleSeat.CFrame = CFrame.new(0, 2, 0) -- Faces -Z by default, which is forward
+```
+
+### Cabin / Enclosures — CanCollide = false
+
+If the seat is inside an enclosed cabin, the cabin walls MUST have `CanCollide = false`. Otherwise the player's character collides with the cabin and can never reach the seat.
+
+```luau
+cabin.CanCollide = false  -- Player can walk through to sit
+cabin.CanQuery = false     -- Raycasts ignore it too
+-- Keep Transparency = 0 so it's still visible
+```
+
+### Wheel Setup — HingeConstraint with Motor
+
+Wheels MUST use `HingeConstraint` with `ActuatorType = Motor` to spin. VehicleSeat automatically drives HingeConstraints that are set up correctly.
+
+```luau
+-- 1. Create chassis (anchored = false, but one part must be the root)
+local chassis = Instance.new("Part")
+chassis.Name = "Chassis"
+chassis.Anchored = false
+
+-- 2. Create wheel (NOT anchored, cylinder shape)
+local wheel = Instance.new("Part")
+wheel.Name = "WheelFL"
+wheel.Shape = Enum.PartType.Cylinder
+wheel.Orientation = Vector3.new(0, 0, 0) -- Correct wheel orientation
+wheel.Anchored = false
+wheel.CustomPhysicalProperties = PhysicalProperties.new(1, 2, 0, 1, 1) -- Good friction
+
+-- 3. Create attachments (connection points)
+local chassisAttach = Instance.new("Attachment")
+chassisAttach.Name = "WheelAttachment"
+chassisAttach.Parent = chassis
+chassisAttach.CFrame = CFrame.new(-3, -1, -4) -- Where the wheel connects
+
+local wheelAttach = Instance.new("Attachment")
+wheelAttach.Name = "WheelAttachment"
+wheelAttach.Parent = wheel
+
+-- 4. HingeConstraint (THIS makes the wheel spin)
+local hinge = Instance.new("HingeConstraint")
+hinge.Attachment0 = chassisAttach
+hinge.Attachment1 = wheelAttach
+hinge.ActuatorType = Enum.ActuatorType.Motor -- REQUIRED for VehicleSeat to drive it
+hinge.Parent = chassis
+
+-- 5. VehicleSeat drives all HingeConstraints in the assembly
+local seat = Instance.new("VehicleSeat")
+seat.MaxSpeed = 50
+seat.Torque = 500
+seat.TurnSpeed = 2
+seat.Anchored = false
+seat.Parent = chassis -- Must be in the same assembly
+```
+
+**Critical rules:**
+- **ALL parts must be Anchored = false** — anchored parts don't move with physics
+- **Wheels connected via HingeConstraint with ActuatorType = Motor** — VehicleSeat automatically drives these
+- **VehicleSeat must be in the same assembly** (welded/connected to chassis)
+- **Chassis parts welded together** with WeldConstraint — not just touching
+- **Wheels NOT welded to chassis** — only connected via HingeConstraint so they can rotate
+
 ## CFrame: ALWAYS Use for Positioning Assemblies
 
 When parts are welded together (an "assembly"), setting `Position` only moves that one part and breaks welds. Use `CFrame` instead:
