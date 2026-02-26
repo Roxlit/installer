@@ -110,7 +110,6 @@ pub fn run() {
             commands::autosync::start_auto_sync,
             commands::autosync::stop_auto_sync,
             commands::autosync::get_auto_sync_status,
-            commands::autosync::trigger_sync_now,
             commands::autosync::trigger_extract_now,
             open_url_fallback,
             open_in_editor,

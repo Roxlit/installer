@@ -86,6 +86,22 @@ jobs:
           releaseDraft: false
           prerelease: false
 
+      - name: Build rbxsync-mcp for Windows
+        run: |
+          git clone --depth 1 --branch v1.3.0 https://github.com/Smokestack-Games/rbxsync.git _rbxsync
+          cd _rbxsync
+          cargo build --release -p rbxsync-mcp
+          copy target\release\rbxsync-mcp.exe ..\rbxsync-mcp.exe
+        shell: pwsh
+
+      - name: Upload rbxsync-mcp to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release upload "v$env:VERSION" rbxsync-mcp.exe --clobber
+        shell: pwsh
+
       - name: Commit version bump
         env:
           VERSION: ${{ inputs.version }}
