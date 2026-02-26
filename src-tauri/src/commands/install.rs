@@ -566,10 +566,17 @@ fn rbxsync_asset_name() -> Option<&'static str> {
     }
 }
 
-/// Returns the RbxSync MCP server asset name (only available on macOS ARM).
-fn rbxsync_mcp_asset_name() -> Option<&'static str> {
+/// Returns the RbxSync MCP server download URL for the current platform.
+/// macOS ARM: from upstream rbxsync releases. Windows: from our Roxlit releases.
+fn rbxsync_mcp_download_url() -> Option<String> {
     if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        Some("rbxsync-mcp-macos-arm64")
+        Some(format!(
+            "https://github.com/{RBXSYNC_REPO}/releases/download/v{RBXSYNC_VERSION}/rbxsync-mcp-macos-arm64"
+        ))
+    } else if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+        Some(format!(
+            "https://github.com/Roxlit/installer/releases/latest/download/rbxsync-mcp.exe"
+        ))
     } else {
         None
     }
@@ -637,8 +644,8 @@ async fn install_rbxsync(config: &InstallConfig, on_event: &Channel<SetupEvent>)
     let plugin_path = plugins_path.join("RbxSync.rbxm");
     download_binary(&plugin_url, &plugin_path).await?;
 
-    // 3. Download MCP server (macOS ARM only)
-    if let Some(mcp_asset) = rbxsync_mcp_asset_name() {
+    // 3. Download MCP server (macOS ARM + Windows x64)
+    if let Some(mcp_url) = rbxsync_mcp_download_url() {
         on_event
             .send(SetupEvent::StepProgress {
                 step: "rbxsync".into(),
@@ -647,10 +654,12 @@ async fn install_rbxsync(config: &InstallConfig, on_event: &Channel<SetupEvent>)
             })
             .map_err(|e| InstallerError::Custom(e.to_string()))?;
 
-        let mcp_url = format!(
-            "https://github.com/{RBXSYNC_REPO}/releases/download/v{RBXSYNC_VERSION}/{mcp_asset}"
-        );
-        let mcp_path = bin_dir.join("rbxsync-mcp");
+        let mcp_bin_name = if cfg!(target_os = "windows") {
+            "rbxsync-mcp.exe"
+        } else {
+            "rbxsync-mcp"
+        };
+        let mcp_path = bin_dir.join(mcp_bin_name);
         download_binary(&mcp_url, &mcp_path).await?;
     }
 

@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use notify::{Event, RecursiveMode, Watcher};
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tokio::sync::Mutex;
@@ -22,37 +21,24 @@ use crate::util::expand_tilde;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "event", content = "data")]
 pub enum SyncEvent {
-    #[serde(rename_all = "camelCase")]
-    FileChanged { path: String },
-    SyncStarted,
-    #[serde(rename_all = "camelCase")]
-    SyncCompleted { files_synced: u32 },
     ExtractStarted,
     #[serde(rename_all = "camelCase")]
     ExtractCompleted { backup_path: String },
-    #[serde(rename_all = "camelCase")]
-    Conflict { path: String, backup_path: String },
     Error { message: String },
 }
 
 // ── State ───────────────────────────────────────────────────────────────────
 
 pub struct AutoSyncState {
-    watcher_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     poller_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     active: Arc<AtomicBool>,
-    sync_lock: Arc<tokio::sync::Mutex<()>>,
-    last_sync_time: Arc<Mutex<Option<SystemTime>>>,
 }
 
 impl Default for AutoSyncState {
     fn default() -> Self {
         Self {
-            watcher_handle: Arc::new(Mutex::new(None)),
             poller_handle: Arc::new(Mutex::new(None)),
             active: Arc::new(AtomicBool::new(false)),
-            sync_lock: Arc::new(tokio::sync::Mutex::new(())),
-            last_sync_time: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -60,11 +46,6 @@ impl Default for AutoSyncState {
 impl AutoSyncState {
     pub fn kill_sync(&self) {
         self.active.store(false, Ordering::SeqCst);
-        if let Ok(mut guard) = self.watcher_handle.try_lock() {
-            if let Some(handle) = guard.take() {
-                handle.abort();
-            }
-        }
         if let Ok(mut guard) = self.poller_handle.try_lock() {
             if let Some(handle) = guard.take() {
                 handle.abort();
@@ -90,17 +71,6 @@ fn collect_rbxjson_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn is_ignored(path: &Path) -> bool {
-    let path_str = path.to_string_lossy();
-    path_str.contains(".roxlit")
-        || path_str.contains(".git")
-        || path_str.contains("node_modules")
-}
-
-fn is_rbxjson(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()) == Some("rbxjson")
-}
-
 fn is_luau(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("luau")
 }
@@ -122,8 +92,8 @@ fn collect_luau_files(dir: &Path) -> Vec<PathBuf> {
 
 /// Snapshot all .luau file contents before extract so we can restore them after.
 pub(crate) fn snapshot_luau_files(project_path: &str) -> HashMap<PathBuf, Vec<u8>> {
-    let src_dir = Path::new(project_path).join("src");
-    let files = collect_luau_files(&src_dir);
+    let scripts_dir = Path::new(project_path).join("scripts");
+    let files = collect_luau_files(&scripts_dir);
     let mut snapshot = HashMap::new();
     for file in files {
         if let Ok(content) = std::fs::read(&file) {
@@ -147,41 +117,6 @@ pub(crate) fn restore_luau_files(snapshot: &HashMap<PathBuf, Vec<u8>>) -> u32 {
         }
     }
     restored
-}
-
-fn accumulate_paths(event: &Event, pending: &mut Vec<String>) {
-    for path in &event.paths {
-        if is_rbxjson(path) && !is_ignored(path) {
-            let ps = path.to_string_lossy().to_string();
-            if !pending.contains(&ps) {
-                pending.push(ps);
-            }
-        }
-    }
-}
-
-async fn run_sync_command(project_path: &str) -> std::result::Result<String, String> {
-    let rbxsync = rbxsync_bin_path();
-    let mut cmd = tokio::process::Command::new(&rbxsync);
-    cmd.arg("sync")
-        .current_dir(project_path)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000);
-
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| format!("Failed to run rbxsync sync: {e}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if output.status.success() {
-        Ok(format!("{}{}", stdout, stderr))
-    } else {
-        Err(format!("rbxsync sync failed: {}{}", stdout, stderr))
-    }
 }
 
 /// Run `rbxsync extract` while protecting .luau files from being overwritten.
@@ -295,22 +230,11 @@ fn cleanup_old_backups(project_path: &str, max_backups: usize) {
     }
 }
 
-fn snapshot_mtimes(project_path: &str) -> HashMap<PathBuf, SystemTime> {
-    let src_dir = Path::new(project_path).join("src");
-    let files = collect_rbxjson_files(&src_dir);
-    let mut mtimes = HashMap::new();
-    for file in files {
-        if let Ok(meta) = std::fs::metadata(&file) {
-            if let Ok(mtime) = meta.modified() {
-                mtimes.insert(file, mtime);
-            }
-        }
-    }
-    mtimes
-}
-
 // ── Commands ────────────────────────────────────────────────────────────────
 
+/// Starts the Studio extract poller. Periodically pulls Studio state to local
+/// .rbxjson files for backup/exploration. Local→Studio sync is intentionally
+/// disabled — instance editing goes through MCP or Studio directly.
 #[tauri::command]
 pub async fn start_auto_sync(
     project_path: String,
@@ -328,135 +252,22 @@ pub async fn start_auto_sync(
     let interval = extract_interval_secs.unwrap_or(30);
     let project_path = expand_tilde(&project_path);
 
-    // ── File watcher task (FS → Studio) ──
-    let watcher_event = on_event.clone();
-    let watcher_active = state.active.clone();
-    let watcher_lock = state.sync_lock.clone();
-    let watcher_last_sync = state.last_sync_time.clone();
-    let watcher_project = project_path.clone();
-
-    let watcher_handle = tokio::spawn(async move {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let watcher_result = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            let _ = tx.send(res);
-        });
-
-        let mut watcher = match watcher_result {
-            Ok(w) => w,
-            Err(e) => {
-                let _ = watcher_event.send(SyncEvent::Error {
-                    message: format!("Failed to create file watcher: {e}"),
-                });
-                return;
-            }
-        };
-
-        let src_path = PathBuf::from(&watcher_project).join("src");
-        if src_path.exists() {
-            if let Err(e) = watcher.watch(&src_path, RecursiveMode::Recursive) {
-                let _ = watcher_event.send(SyncEvent::Error {
-                    message: format!("Failed to watch src/: {e}"),
-                });
-                return;
-            }
-        } else {
-            let _ = watcher_event.send(SyncEvent::Error {
-                message: "src/ directory not found — file watcher inactive".into(),
-            });
-        }
-
-        // Keep watcher alive for the duration of this task
-        let _watcher = watcher;
-
-        loop {
-            if !watcher_active.load(Ordering::SeqCst) {
-                break;
-            }
-
-            // Wait for first .rbxjson change
-            let first = loop {
-                match rx.recv().await {
-                    Some(Ok(event)) => {
-                        let dominated: Vec<_> = event
-                            .paths
-                            .iter()
-                            .filter(|p| is_rbxjson(p) && !is_ignored(p))
-                            .collect();
-                        if !dominated.is_empty() {
-                            break event;
-                        }
-                    }
-                    Some(Err(_)) => {}
-                    None => return, // channel closed
-                }
-            };
-
-            let mut pending: Vec<String> = Vec::new();
-            accumulate_paths(&first, &mut pending);
-
-            // Debounce: collect more events for 1.5s after each event
-            loop {
-                match tokio::time::timeout(Duration::from_millis(1500), rx.recv()).await {
-                    Ok(Some(Ok(event))) => accumulate_paths(&event, &mut pending),
-                    Ok(Some(Err(_))) => {}
-                    _ => break, // timeout (debounce done) or channel closed
-                }
-            }
-
-            if pending.is_empty() || !watcher_active.load(Ordering::SeqCst) {
-                continue;
-            }
-
-            // Emit file changed events
-            for p in &pending {
-                let _ = watcher_event.send(SyncEvent::FileChanged { path: p.clone() });
-            }
-            let count = pending.len() as u32;
-
-            // Acquire sync lock and run rbxsync sync
-            let _lock = watcher_lock.lock().await;
-            let _ = watcher_event.send(SyncEvent::SyncStarted);
-
-            match run_sync_command(&watcher_project).await {
-                Ok(_) => {
-                    let _ = watcher_event.send(SyncEvent::SyncCompleted {
-                        files_synced: count,
-                    });
-                    *watcher_last_sync.lock().await = Some(SystemTime::now());
-                }
-                Err(e) => {
-                    let _ = watcher_event.send(SyncEvent::Error { message: e });
-                }
-            }
-        }
-    });
-
-    // ── Studio poller task (Studio → FS) ──
+    // ── Studio poller task (Studio → FS, backup only) ──
     let poller_event = on_event.clone();
     let poller_active = state.active.clone();
-    let poller_lock = state.sync_lock.clone();
-    let poller_last_sync = state.last_sync_time.clone();
     let poller_project = project_path.clone();
 
     let poller_handle = tokio::spawn(async move {
         loop {
-            // Sleep first (measured from completion of previous cycle)
             tokio::time::sleep(Duration::from_secs(interval)).await;
 
             if !poller_active.load(Ordering::SeqCst) {
                 break;
             }
 
-            // Snapshot mtimes before extract (for conflict detection)
-            let pre_mtimes = snapshot_mtimes(&poller_project);
-
-            // Create backup
+            // Create backup before extract
             let backup_path = match create_backup(&poller_project) {
-                Ok(p) if p.is_empty() => {
-                    // No src/ dir, skip extraction
-                    continue;
-                }
+                Ok(p) if p.is_empty() => continue,
                 Ok(p) => p,
                 Err(e) => {
                     let _ = poller_event.send(SyncEvent::Error {
@@ -466,8 +277,6 @@ pub async fn start_auto_sync(
                 }
             };
 
-            // Acquire sync lock and run extract
-            let _lock = poller_lock.lock().await;
             let _ = poller_event.send(SyncEvent::ExtractStarted);
 
             match run_extract_command(&poller_project).await {
@@ -475,42 +284,16 @@ pub async fn start_auto_sync(
                     let _ = poller_event.send(SyncEvent::ExtractCompleted {
                         backup_path: backup_path.clone(),
                     });
-
-                    // Conflict detection
-                    let last_sync = *poller_last_sync.lock().await;
-                    if let Some(last_sync_time) = last_sync {
-                        let post_mtimes = snapshot_mtimes(&poller_project);
-                        for (path, post_mtime) in &post_mtimes {
-                            let was_modified_by_extract = pre_mtimes
-                                .get(path)
-                                .map(|pre| pre != post_mtime)
-                                .unwrap_or(true);
-
-                            let was_modified_locally = pre_mtimes
-                                .get(path)
-                                .map(|pre| *pre > last_sync_time)
-                                .unwrap_or(false);
-
-                            if was_modified_by_extract && was_modified_locally {
-                                let _ = poller_event.send(SyncEvent::Conflict {
-                                    path: path.to_string_lossy().to_string(),
-                                    backup_path: backup_path.clone(),
-                                });
-                            }
-                        }
-                    }
                 }
                 Err(e) => {
                     let _ = poller_event.send(SyncEvent::Error { message: e });
                 }
             }
 
-            // Cleanup old backups
             cleanup_old_backups(&poller_project, 20);
         }
     });
 
-    *state.watcher_handle.lock().await = Some(watcher_handle);
     *state.poller_handle.lock().await = Some(poller_handle);
 
     Ok(())
@@ -520,9 +303,6 @@ pub async fn start_auto_sync(
 pub async fn stop_auto_sync(state: tauri::State<'_, AutoSyncState>) -> Result<()> {
     state.active.store(false, Ordering::SeqCst);
 
-    if let Some(handle) = state.watcher_handle.lock().await.take() {
-        handle.abort();
-    }
     if let Some(handle) = state.poller_handle.lock().await.take() {
         handle.abort();
     }
@@ -536,25 +316,11 @@ pub async fn get_auto_sync_status(state: tauri::State<'_, AutoSyncState>) -> Res
 }
 
 #[tauri::command]
-pub async fn trigger_sync_now(
-    project_path: String,
-    state: tauri::State<'_, AutoSyncState>,
-) -> Result<String> {
-    let project_path = expand_tilde(&project_path);
-    let _lock = state.sync_lock.lock().await;
-
-    run_sync_command(&project_path)
-        .await
-        .map_err(InstallerError::Custom)
-}
-
-#[tauri::command]
 pub async fn trigger_extract_now(
     project_path: String,
-    state: tauri::State<'_, AutoSyncState>,
+    _state: tauri::State<'_, AutoSyncState>,
 ) -> Result<String> {
     let project_path = expand_tilde(&project_path);
-    let _lock = state.sync_lock.lock().await;
 
     create_backup(&project_path).map_err(InstallerError::Custom)?;
     cleanup_old_backups(&project_path, 20);

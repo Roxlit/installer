@@ -92,18 +92,111 @@ pub async fn start_rojo(
     let rojo = rojo_bin_path();
     let project_path = expand_tilde(&project_path);
 
-    // Ensure project directories exist (user may have deleted src/)
+    // Kill any orphaned rojo process holding the port from a previous session
+    kill_orphaned_rojo().await;
+
+    // Ensure project directory and essential config files exist
     let project_dir = std::path::Path::new(&project_path);
+    if !project_dir.exists() {
+        std::fs::create_dir_all(project_dir).map_err(|e| {
+            InstallerError::Custom(format!("Failed to create project directory: {e}"))
+        })?;
+    }
+
+    let aftman_toml = project_dir.join("aftman.toml");
+    if !aftman_toml.exists() {
+        std::fs::write(&aftman_toml, "[tools]\nrojo = \"rojo-rbx/rojo@7.4.4\"\n")
+            .map_err(|e| InstallerError::Custom(format!(
+                "Failed to write aftman.toml at {}: {e}", aftman_toml.display()
+            )))?;
+    }
+
+    // Migrate legacy projects: move .luau files from src/ to scripts/
+    let scripts_dir = project_dir.join("scripts");
+    let legacy_src = project_dir.join("src");
+    if !scripts_dir.exists() && legacy_src.exists() {
+        // Check if src/ has any .luau files (legacy layout)
+        let has_luau = has_luau_files(&legacy_src);
+        if has_luau {
+            let _ = std::fs::create_dir_all(&scripts_dir);
+            move_luau_tree(&legacy_src, &scripts_dir);
+        }
+    }
+
+    let project_json = project_dir.join("default.project.json");
+    // Rewrite project.json if it still references src/ for scripts
+    if project_json.exists() {
+        if let Ok(content) = std::fs::read_to_string(&project_json) {
+            if content.contains("\"src/ServerScriptService\"")
+                || content.contains("\"src/StarterPlayer")
+                || content.contains("\"src/ReplicatedStorage\"")
+            {
+                let name = project_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("my-game");
+                let _ = std::fs::write(&project_json, crate::templates::project_json(name));
+            }
+        }
+    } else {
+        let name = project_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("my-game");
+        std::fs::write(&project_json, crate::templates::project_json(name))
+            .map_err(|e| InstallerError::Custom(format!(
+                "Failed to write default.project.json at {}: {e}", project_json.display()
+            )))?;
+    }
+
+    // Ensure .luaurc exists
+    let luaurc = project_dir.join(".luaurc");
+    if !luaurc.exists() {
+        let _ = std::fs::write(&luaurc, crate::templates::luaurc());
+    }
+
+    // Ensure rbxsync.json exists
+    let rbxsync_json = project_dir.join("rbxsync.json");
+    if !rbxsync_json.exists() {
+        let name = project_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("my-game");
+        let _ = std::fs::write(&rbxsync_json, crate::templates::rbxsync_json(name));
+    }
+
+    // Ensure .rbxsyncignore exists and includes scripts/
+    let rbxsyncignore = project_dir.join(".rbxsyncignore");
+    if rbxsyncignore.exists() {
+        if let Ok(content) = std::fs::read_to_string(&rbxsyncignore) {
+            if !content.contains("scripts/") {
+                let _ = std::fs::write(
+                    &rbxsyncignore,
+                    format!("{}scripts/\n", content),
+                );
+            }
+        }
+    } else {
+        let _ = std::fs::write(
+            &rbxsyncignore,
+            ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nscripts/\n",
+        );
+    }
+
+    // Ensure AI context file exists (or regenerate if stale)
+    ensure_ai_context(project_dir, &project_path);
+
+    // Ensure project directories exist (user may have deleted scripts/)
     for subdir in &[
-        "src/ServerScriptService",
-        "src/StarterPlayer/StarterPlayerScripts",
-        "src/StarterPlayer/StarterCharacterScripts",
-        "src/ReplicatedStorage",
-        "src/ReplicatedFirst",
-        "src/ServerStorage",
-        "src/Workspace",
-        "src/StarterGui",
-        "src/StarterPack",
+        "scripts/ServerScriptService",
+        "scripts/StarterPlayer/StarterPlayerScripts",
+        "scripts/StarterPlayer/StarterCharacterScripts",
+        "scripts/ReplicatedStorage",
+        "scripts/ReplicatedFirst",
+        "scripts/ServerStorage",
+        "scripts/Workspace",
+        "scripts/StarterGui",
+        "scripts/StarterPack",
     ] {
         let dir = project_dir.join(subdir);
         if !dir.exists() {
@@ -296,4 +389,154 @@ fn parse_rojo_port(line: &str) -> Option<u16> {
         }
     }
     None
+}
+
+/// Check recursively if a directory contains any .luau files.
+fn has_luau_files(dir: &std::path::Path) -> bool {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if has_luau_files(&path) {
+                    return true;
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("luau") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Move .luau files from src/ to scripts/, preserving directory structure.
+/// Only moves .luau files — .rbxjson files stay in src/ for rbxsync.
+fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
+    if let Ok(entries) = std::fs::read_dir(src) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if path.is_dir() {
+                let sub_dest = dest.join(&name);
+                let _ = std::fs::create_dir_all(&sub_dest);
+                move_luau_tree(&path, &sub_dest);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("luau") {
+                let dest_file = dest.join(&name);
+                // Move = copy + delete (works across filesystems)
+                if std::fs::copy(&path, &dest_file).is_ok() {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+}
+
+/// Ensure AI context files exist and are up to date.
+///
+/// Checks for a version marker in the existing context file. If the marker is missing
+/// (pre-versioning file) or the version is older than the current CONTEXT_VERSION,
+/// the file is regenerated. User notes (everything after "## Your Notes") are preserved.
+fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
+    use crate::templates;
+
+    let context_files = [
+        "CLAUDE.md",
+        ".cursorrules",
+        ".windsurfrules",
+        ".github/copilot-instructions.md",
+        "AI-CONTEXT.md",
+    ];
+
+    // Find the existing context file (if any)
+    let existing_file = context_files
+        .iter()
+        .map(|f| project_dir.join(f))
+        .find(|p| p.exists());
+
+    // Check if regeneration is needed
+    let needs_regen = match &existing_file {
+        None => true, // No context file at all
+        Some(path) => {
+            let content = std::fs::read_to_string(path).unwrap_or_default();
+            // Extract version from marker: <!-- roxlit-context-version: X.Y.Z -->
+            let file_version = content
+                .lines()
+                .find(|line| line.contains("roxlit-context-version:"))
+                .and_then(|line| {
+                    let start = line.find(':')? + 1;
+                    let end = line.find("-->")?;
+                    Some(line[start..end].trim())
+                });
+            match file_version {
+                None => true, // No version marker → pre-versioning file, always regenerate
+                Some(v) => v != templates::CONTEXT_VERSION,
+            }
+        }
+    };
+
+    if !needs_regen {
+        return;
+    }
+
+    // Extract user notes from existing file before regenerating
+    let user_notes = existing_file.as_ref().and_then(|path| {
+        let content = std::fs::read_to_string(path).ok()?;
+        let marker = templates::USER_NOTES_MARKER;
+        let marker_pos = content.find(marker)?;
+        // Keep everything from the marker line onward (including the marker itself)
+        Some(content[marker_pos..].to_string())
+    });
+
+    // Read config to find ai_tool for this project
+    let ai_tool = dirs::home_dir()
+        .and_then(|h| std::fs::read_to_string(h.join(".roxlit").join("config.json")).ok())
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|config| {
+            config["projects"]
+                .as_array()?
+                .iter()
+                .find(|p| p["path"].as_str() == Some(project_path))
+                .and_then(|p| p["aiTool"].as_str().map(String::from))
+        })
+        .unwrap_or_else(|| "claude".to_string());
+
+    let project_name = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("my-game");
+
+    // Generate new context (this also writes context packs and MCP config)
+    let _ = crate::commands::context::generate_context(project_path, &ai_tool, project_name);
+
+    // If user had custom notes, append them back to the regenerated file
+    if let (Some(notes), Some(path)) = (user_notes, &existing_file) {
+        if let Ok(new_content) = std::fs::read_to_string(path) {
+            // Replace the default "Your Notes" section with the user's saved notes
+            if let Some(marker_pos) = new_content.find(templates::USER_NOTES_MARKER) {
+                let mut final_content = new_content[..marker_pos].to_string();
+                final_content.push_str(&notes);
+                let _ = std::fs::write(path, final_content);
+            }
+        }
+    }
+}
+
+/// Kill orphaned rojo processes from a previous session that may still hold the port.
+async fn kill_orphaned_rojo() {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = tokio::process::Command::new("taskkill");
+        cmd.args(["/F", "/IM", "rojo.exe"])
+            .creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.output().await;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut cmd = tokio::process::Command::new("pkill");
+        cmd.args(["-f", "rojo serve"]);
+        let _ = cmd.output().await;
+    }
+
+    // Give the OS time to release the port
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 }
