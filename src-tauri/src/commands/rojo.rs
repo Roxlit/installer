@@ -430,9 +430,14 @@ fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
     }
 }
 
-/// Ensure AI context files exist. Generates them if missing or regenerates if stale
-/// (e.g. still referencing old src/ layout). Reads ~/.roxlit/config.json for the AI tool.
+/// Ensure AI context files exist and are up to date.
+///
+/// Checks for a version marker in the existing context file. If the marker is missing
+/// (pre-versioning file) or the version is older than the current CONTEXT_VERSION,
+/// the file is regenerated. User notes (everything after "## Your Notes") are preserved.
 fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
+    use crate::templates;
+
     let context_files = [
         "CLAUDE.md",
         ".cursorrules",
@@ -441,25 +446,45 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
         "AI-CONTEXT.md",
     ];
 
-    // Check if any context file exists at all
-    let any_exists = context_files
+    // Find the existing context file (if any)
+    let existing_file = context_files
         .iter()
-        .any(|f| project_dir.join(f).exists());
+        .map(|f| project_dir.join(f))
+        .find(|p| p.exists());
 
-    // Check if existing files are stale (old src/ layout)
-    let is_stale = context_files.iter().any(|f| {
-        let path = project_dir.join(f);
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            content.contains("Write Luau code in `src/`")
-                || content.contains("Edit local files in `src/`. Rojo syncs")
-        } else {
-            false
+    // Check if regeneration is needed
+    let needs_regen = match &existing_file {
+        None => true, // No context file at all
+        Some(path) => {
+            let content = std::fs::read_to_string(path).unwrap_or_default();
+            // Extract version from marker: <!-- roxlit-context-version: X.Y.Z -->
+            let file_version = content
+                .lines()
+                .find(|line| line.contains("roxlit-context-version:"))
+                .and_then(|line| {
+                    let start = line.find(':')? + 1;
+                    let end = line.find("-->")?;
+                    Some(line[start..end].trim())
+                });
+            match file_version {
+                None => true, // No version marker → pre-versioning file, always regenerate
+                Some(v) => v != templates::CONTEXT_VERSION,
+            }
         }
-    });
+    };
 
-    if any_exists && !is_stale {
+    if !needs_regen {
         return;
     }
+
+    // Extract user notes from existing file before regenerating
+    let user_notes = existing_file.as_ref().and_then(|path| {
+        let content = std::fs::read_to_string(path).ok()?;
+        let marker = templates::USER_NOTES_MARKER;
+        let marker_pos = content.find(marker)?;
+        // Keep everything from the marker line onward (including the marker itself)
+        Some(content[marker_pos..].to_string())
+    });
 
     // Read config to find ai_tool for this project
     let ai_tool = dirs::home_dir()
@@ -479,7 +504,20 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
         .and_then(|n| n.to_str())
         .unwrap_or("my-game");
 
+    // Generate new context (this also writes context packs and MCP config)
     let _ = crate::commands::context::generate_context(project_path, &ai_tool, project_name);
+
+    // If user had custom notes, append them back to the regenerated file
+    if let (Some(notes), Some(path)) = (user_notes, &existing_file) {
+        if let Ok(new_content) = std::fs::read_to_string(path) {
+            // Replace the default "Your Notes" section with the user's saved notes
+            if let Some(marker_pos) = new_content.find(templates::USER_NOTES_MARKER) {
+                let mut final_content = new_content[..marker_pos].to_string();
+                final_content.push_str(&notes);
+                let _ = std::fs::write(path, final_content);
+            }
+        }
+    }
 }
 
 /// Kill orphaned rojo processes from a previous session that may still hold the port.
