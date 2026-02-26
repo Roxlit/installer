@@ -102,13 +102,37 @@ jobs:
           gh release upload "v$env:VERSION" rbxsync-mcp.exe --clobber
         shell: pwsh
 
-      - name: Commit version bump
+      - name: Bump version on dev branch
         env:
           VERSION: ${{ inputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git stash --include-untracked
+          git fetch origin dev
+          git checkout dev
+
+          # Apply same version updates to dev
+          cd src-tauri
+          $lines = Get-Content Cargo.toml
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^version = "') {
+              $lines[$i] = "version = `"$env:VERSION`""
+              break
+            }
+          }
+          $lines | Set-Content Cargo.toml
+          cd ..
+
+          $conf = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $conf.version = "$env:VERSION"
+          $conf | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $pkg.version = "$env:VERSION"
+          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json
+
           git add src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json
           git commit -m "chore: bump version to $env:VERSION"
-          git push
+          git push origin dev
         shell: pwsh
