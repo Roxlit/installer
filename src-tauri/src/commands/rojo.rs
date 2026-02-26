@@ -195,6 +195,9 @@ pub async fn start_rojo(
     // Ensure AI context file exists (or regenerate if stale)
     ensure_ai_context(project_dir, &project_path);
 
+    // Ensure Debug.luau exists (added in v0.7.0, older projects don't have it)
+    ensure_debug_module(project_dir);
+
     // Ensure project directories exist (user may have deleted scripts/)
     for subdir in &[
         "scripts/ServerScriptService",
@@ -664,6 +667,21 @@ fn ensure_mcp_config(project_dir: &std::path::Path, ai_tool: &str) {
 
     // Create MCP config
     let _ = crate::commands::context::configure_mcp(project_dir, ai_tool);
+}
+
+/// Ensure the Debug.luau module exists in the project.
+///
+/// Added in v0.7.0 — older projects don't have it. The AI context references
+/// `require(game.ReplicatedStorage.Debug)`, so the file must exist.
+fn ensure_debug_module(project_dir: &std::path::Path) {
+    let debug_path = project_dir
+        .join("scripts")
+        .join("ReplicatedStorage")
+        .join("Debug.luau");
+    if !debug_path.exists() {
+        let _ = std::fs::create_dir_all(debug_path.parent().unwrap());
+        let _ = std::fs::write(&debug_path, crate::templates::debug_module());
+    }
 }
 
 /// Ensure the RoxlitDebug Studio plugin is installed and up to date.

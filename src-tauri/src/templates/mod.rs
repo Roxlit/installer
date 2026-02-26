@@ -337,6 +337,13 @@ Tools:
 - `run_test` — starts a playtest session in Studio, captures ALL console output (prints, warnings, errors), stops the session, and returns the full output. This is your #1 debugging tool.
 - `run_code` — execute arbitrary Luau in Studio to inspect runtime state (check property values, verify SoundIds, test expressions). Use this for quick checks without a full playtest.
 
+**CRITICAL — `run_code` rules:**
+- Each `run_code` call is a **separate execution context**. Local variables do NOT persist between calls.
+- To reference instances created in a previous call, use full paths: `workspace:FindFirstChild("Car")`, NOT a local variable from before.
+- For complex multi-instance creation (models, vehicles, GUIs), do it in a **single `run_code` call** with all the code. Do NOT split into multiple calls expecting variables to carry over.
+- If the code is too long for one call, have each call save its work to the DataModel (parent instances to workspace) and the next call finds them by path.
+- **NEVER call `:Destroy()` on existing instances to "rebuild from scratch"** unless the user explicitly asks. If something looks wrong, inspect it first — don't delete and redo. Destroying work wastes time and tokens.
+
 **Common debugging patterns:**
 - "car doesn't move" → `run_test`, read the output for errors (missing VehicleSeat? wrong property name?)
 - "sound doesn't play" → `run_code` to check `game.Workspace.Model.Sound.SoundId` and verify it's not empty
