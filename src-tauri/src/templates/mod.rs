@@ -139,7 +139,7 @@ pub fn rbxsync_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.5.0";
+pub const CONTEXT_VERSION: &str = "0.5.1";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -402,7 +402,8 @@ src/                                    ← Instance cache (.rbxjson, managed by
 - **Never trust the client** → validate everything on the server
 - **Never store secrets in ReplicatedStorage** → clients can read it
 - **Never call DataStore without `pcall()`** → DataStore calls can fail
-- **Testing**: Scripts don't run in edit mode. Press Play (F5) for server + client, Run (F8) for server-only. Read `.roxlit/context/studio-ui.md` before giving Studio UI directions.
+- **Testing**: Scripts don't run in edit mode. Press Play (F5) for server + client, Run (F8) for server-only.
+- **MANDATORY — Studio UI**: Before telling the user where to find ANYTHING in Studio (Output, panels, menus, buttons), you MUST first read `.roxlit/context/studio-ui.md`. Do NOT rely on your own knowledge of Studio — it is outdated and wrong (e.g., there is NO "View" tab in the new Studio UI). Read the file first, then answer.
 {rbxsync_section}## Roblox Context Packs
 
 This project includes curated Roblox documentation in `.roxlit/context/`. Before writing code that involves a specific system, **read the relevant file**:
