@@ -856,126 +856,169 @@ local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
 "#
 }
 
-/// Roblox Studio UI: panel locations, testing modes, localization, troubleshooting.
-/// Source: https://create.roblox.com/docs/studio/ui-overview (verified Feb 2026)
+/// Roblox Studio UI: layout, toolbar contents, panel locations, testing, troubleshooting.
+/// Source: verified from actual Studio screenshots (Feb 2026), new Flexible UI.
 pub fn studio_ui() -> &'static str {
     r#"# Roblox Studio UI
 
-> Source: [Studio Interface docs](https://create.roblox.com/docs/studio/ui-overview) — verified Feb 2026, new Flexible UI (default since Jan 2026).
+> Verified from actual Studio screenshots — Feb 2026, new Flexible UI (default since Jan 2026).
 
 ## How to Guide Users
 
 **Studio may be in ANY language.** Do NOT assume English labels or guess translations. Instead:
-1. **Describe by position**: "at the top-left of the mezzanine" not just "the Play button"
+1. **Describe by position**: "the far-left dropdown in the mezzanine" not "the Play button"
 2. **Describe by function**: "the panel where print() messages appear (Output)"
-3. **Use landmarks**: "next to the Script tab, in the center of the mezzanine"
-4. **Respond in the user's language** — if they write in Spanish, respond in Spanish. If English, respond in English.
+3. **Use landmarks**: "3rd group of icons in the Script tab toolbar"
+4. **Respond in the user's language** — match whatever language they write in.
 
 ## Studio Layout — Three Zones at the Top
 
-The top of Studio has three distinct areas. Understanding these helps you give precise directions.
-
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ▶ Play/Test    │  Home  Model  Avatar  UI  Script  Plugins │  👤  │  ← MEZZANINE
-│   controls      │            (tool tabs)                    │ acct │
-├─────────────────┴───────────────────────────────────────────┴──────┤
-│  [Icon] [Icon] [Icon] [Icon]  ...  [Output] [Cmd Bar]             │  ← TOOLBAR
-│  (buttons change based on which tab is selected above)             │
-└────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│  File  Edit  View  Plugins  Test  Window  Help                        │  ← MENU BAR
+├───────────────────────────────────────────────────────────────────────┤
+│ [Test▾] ▶ ⏸▾ ⏹ ██ │ Home Avatar UI Script Model Plugins + │ [Collab] ⚙🔔👤 │ ← MEZZANINE
+├───────────────────────────────────────────────────────────────────────┤
+│  [Icon] [Icon] | [Icon] [Icon] | [Icon] ...  (changes per tab)       │  ← TOOLBAR
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1. Mezzanine (the top bar)
-The horizontal bar at the very top of Studio. Contains three sections:
-- **Left**: Play/test controls (Play, Run, Stop) — always visible regardless of tab
-- **Center**: The 6 default tool tabs — Home, Model, Avatar, UI, Script, Plugins
-- **Right**: Collaboration, sharing, Assistant, notifications, account
+### 1. Menu Bar (topmost, below title bar)
+Traditional dropdown menu: **File | Edit | View | Plugins | Test | Window | Help** (7 items).
 
-### 2. Toolbar (below the mezzanine)
-The row of **icon buttons** that changes based on which tab is selected. For example:
-- Select the **Script** tab → toolbar shows: script tools, Output button, Command Bar button, Script Analysis
-- Select the **Home** tab → toolbar shows: Move, Scale, Rotate, Part insertion, etc.
+Key menus:
+- **Window**: Opens/closes ANY panel (Output, Explorer, Properties, etc.) — universal fallback when you can't find a panel
+- **View**: Camera and viewport display options
+- **Test**: Same testing options as the mezzanine play controls
+- **There is no "View" tab** in the new UI — the old View tab was replaced by the Window menu
 
-### 3. Window menu
-A separate menu (not a tab) for opening/closing panels like Output, Explorer, Properties. Access it from the top menu area. This replaced the old "View" tab — **there is no View tab in the new UI**.
+### 2. Mezzanine (below menu bar)
+Three sections side by side:
+
+**Left — Play/Test controls** (always visible regardless of tab):
+- Test mode dropdown (4 options: Play, Run, Play Here, Start Server)
+- Play ▶ (starts the selected test mode)
+- Pause ⏸ (has dropdown: pause everything, or pause client only)
+- Stop ⏹
+- Switch Client/Server view (toggles the viewport between client and server perspective)
+- **When a test is running**: a divider line appears and a **Step Forward** button shows up (advances one simulation frame — useful for debugging physics/animations frame by frame)
+
+**Center — Tool tabs**: `Home | Avatar | UI | Script | Model | Plugins | +`
+- The **+** button lets users create **custom toolbar tabs** with any combination of tools
+- Clicking a tab changes the entire TOOLBAR row below
+- Tabs are reorderable and customizable (right-click for options)
+
+**Right — Account/collaboration**:
+- Collaborate button (green), Settings gear, Notification bell, User avatar
+
+### 3. Toolbar (below mezzanine)
+A row of icon buttons that **changes entirely** based on which tab is selected. Buttons are grouped by function with thin vertical separators between groups.
+
+## Toolbar Contents by Tab
+
+### Home tab
+1. **Transform**: Select, Move, Scale, Rotate, Transform, Geometric constraints + snap settings (studs increment, degree increment)
+2. **Insert**: Part, Terrain, Character (rig), GUI, Script, Import
+3. **Appearance**: Material, Color, Group, Lock, Anchor
+4. **Panels**: Explorer, Properties, Toolbox, Asset Manager
+
+### Model tab
+1. **Transform**: Select, Move, Scale, Rotate, Transform, Geometric + snap (degrees)
+2. **Pivot**: Pivot, Reset pivot
+3. **Insert**: Part, Effect
+4. **Constraints**: Connection, Constraint, Weld
+5. **Appearance**: Material, Color, Group, Lock, Anchor
+6. **Solid modeling**: Align, Union, Intersect, Separate, Negate
+
+### Avatar tab
+1. **Transform**: Select, Move, Scale, Rotate, Transform, Geometric + snap settings
+2. **Avatar**: Avatar setup/import
+3. **Character**: Character (rig builder), Configure, Animation, Accessory
+
+### UI tab
+1. **UI elements**: GUI (ScreenGui), Frame, Label, TextInput, Appearance, Layout, UIConstraint
+2. **Editor**: UI Editor panel
+
+### Script tab
+1. **Navigation**: Back, Forward (navigate between script locations)
+2. **Script tools**: Script (insert new), Format, Find, Go to Line
+3. **Panels**: Command Bar, **Output** — this is the primary place to open Output
+4. **Debugging**: Breakpoints, Call Stack, Watch/Inspector
+5. **Analysis**: Script Analysis, Script Activity
+
+### Plugins tab
+Shows installed Studio plugins. After a **thicker separator line**, third-party plugins appear (e.g., Rojo, RbxSync installed by Roxlit). Studio uses this visual separator to distinguish built-in tools from community/user-installed plugins.
 
 ## How to Open Key Panels
 
-### Output
-Where `print()` and `warn()` messages appear. Shows script errors and engine messages.
+### Output (print/warn/error messages)
+1. Click **Script** tab (center of mezzanine) → **Output** button in toolbar (3rd group, next to Command Bar)
+2. OR: **Window** menu (in the menu bar) → Output
+- Docks at the **bottom** of the screen
 
-**How to find it:**
-1. Click the **Script** tab (center of the mezzanine) → in the toolbar below, look for the **Output** button
-2. OR: open the **Window** menu → Script → Output
-- Output typically docks at the **bottom** of the screen
+### Command Bar (execute Luau directly, like a REPL)
+1. Click **Script** tab → **Command Bar** in toolbar (3rd group, next to Output)
+2. OR: **Window** menu → Command Bar
+- Appears at the **very bottom**, below Output
 
-### Command Bar
-Execute Luau code directly (like a REPL). Useful for quick tests.
+### Explorer (DataModel tree — every instance in the game)
+- **Visible by default** on the **right side**
+- If closed: **Home** tab toolbar (last group) → Explorer button
+- OR: **Window** menu → Explorer
 
-**How to find it:**
-1. Click the **Script** tab → in the toolbar, look for **Command Bar**
-2. OR: **Window** menu → Script → Command Bar
-3. OR: keyboard shortcut **Ctrl+9** (Windows) / **Cmd+9** (Mac)
-- Command Bar appears at the **very bottom** of the screen, below Output
+### Properties (edit selected instance)
+- **Visible by default** on the **right side**, below Explorer
+- If closed: **Home** tab toolbar (last group) → Properties button
+- OR: **Window** menu → Properties
 
-### Explorer
-Shows the full DataModel hierarchy (every instance in the game).
-
-- **Visible by default** (right side of screen)
-- If closed: **Window** menu → Explorer, or **Home** tab toolbar
-- Docks on the **right side**
-
-### Properties
-Shows and edits properties of the selected instance.
-
-- **Visible by default** (right side, below Explorer)
-- If closed: **Window** menu → Properties, or **Home** tab toolbar
-
-### Script Analysis
-Luau static analysis — warnings, errors, type issues in your code.
-
-- Click the **Script** tab → look for **Script Analysis** in the toolbar
-- OR: **Window** menu → Script → Script Analysis
+### Script Analysis (static Luau warnings/errors)
+- Click **Script** tab → **Script Analysis** in toolbar (5th group)
+- OR: **Window** menu → Script Analysis
 
 ## Testing Modes
 
 **Scripts do NOT run in edit mode.** The user MUST start a test session first.
 
+The test mode dropdown on the **far left of the mezzanine** has **4 options**:
+
 | Mode | Shortcut | What it does |
 |------|----------|-------------|
 | **Play** | **F5** | Starts local server + client. Required for RemoteEvents, player lifecycle |
 | **Run** | **F8** | Starts server only. For server-side testing without a player |
-| **Stop** | **Shift+F5** | Stops the test, returns to edit mode |
+| **Play Here** | — | Starts Play but spawns the character at the camera position |
+| **Start** | — | Starts a multi-client test server (for network testing) |
 
-Play/Run/Stop controls are on the **left side of the mezzanine** — always visible no matter which tab is selected.
+**Stop**: **Shift+F5** — stops the test, returns to edit mode.
+
+Play/Test controls are **always visible** on the left side of the mezzanine, no matter which tab is selected.
 
 ## Common User Issues
 
 ### "My script isn't running"
-1. **Did you press Play (F5)?** — scripts don't execute in edit mode. The Play button is on the left side of the mezzanine (top-left of Studio)
+1. **Did you press Play (F5)?** — scripts don't execute in edit mode. Look for the Play ▶ button on the far left of the mezzanine
 2. Check the script is in the correct service (server → ServerScriptService, client → StarterPlayerScripts)
-3. Open **Output** (Script tab → Output button in the toolbar) and look for errors
+3. Open **Output** (Script tab → Output button in the toolbar, 3rd group) and look for errors
 4. Verify the script synced from Rojo: check Explorer for the script under the correct service
 
 ### "I can't see print() output"
-1. **Output panel might be closed** → click Script tab, then the Output button in the toolbar below
+1. **Output panel might be closed** → Script tab → Output button in the toolbar (3rd group)
 2. Make sure you pressed **Play (F5)** first — print() only runs during a test session
 3. Check the Output filter — it might be hiding non-error messages
 
 ### "I can't find [button/panel]"
-1. The ribbon is **fully customizable** — the user may have hidden or moved tabs
-2. Right-click the mezzanine to see customization options (show/hide tabs, add tools)
-3. Most panels can always be found via the **Window** menu regardless of tab layout
-4. If completely lost: right-click mezzanine → reset to default layout
+1. The toolbar is **fully customizable** — the user may have hidden, moved, or rearranged tabs and buttons
+2. The **+** button in the mezzanine lets users add custom tabs — their layout may differ from defaults
+3. Most panels can ALWAYS be found via the **Window** menu in the menu bar
+4. If completely lost: right-click the mezzanine → reset to default layout
 
 ### "Changes aren't syncing to Studio"
 1. Check Rojo is running (green status in Roxlit launcher)
-2. Check the **Rojo plugin is connected**: go to the Plugins tab (center of mezzanine) → Rojo button → should show "Connected"
+2. Check the **Rojo plugin is connected**: Plugins tab → after the thick separator line, look for the Rojo button → should show "Connected"
 3. If "Not Connected": click the Rojo button to reconnect
-4. If the Rojo plugin doesn't appear: **restart Studio** (plugins only load on startup)
+4. If the Rojo plugin doesn't appear: **restart Studio** (plugins load on startup only)
 
 ### "Instance sync (RbxSync) isn't working"
-1. RbxSync plugin needs manual activation each session: **Plugins tab → RbxSync → Sync/Connect**
+1. RbxSync plugin needs manual activation each session: **Plugins tab → after the thick separator → RbxSync → Sync/Connect**
 2. Roxlit must be running `rbxsync serve` (check the launcher)
 3. If plugin doesn't appear: restart Studio
 "#
