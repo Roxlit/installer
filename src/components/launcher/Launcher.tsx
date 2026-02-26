@@ -13,6 +13,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { LogTerminal } from "./LogTerminal";
 import { UpdateBanner } from "./UpdateBanner";
+import { SettingsPopover } from "./SettingsPopover";
 import { TOOL_OPTIONS } from "@/lib/types";
 import type { RojoStatus, RbxSyncStatus, AutoSyncStatus, UpdateInfo } from "@/lib/types";
 
@@ -39,11 +40,13 @@ interface LauncherProps {
   logs: string[];
   error: string | null;
   update: UpdateInfo | null;
+  updateDelayDays: number;
   onStartDevelopment: () => void;
   onStopAll: () => void;
   onOpenEditor: () => void;
   onNewProject: () => void;
   onDismissUpdate: () => void;
+  onUpdateDelayChange: (days: number) => void;
 }
 
 function StatusDot({ status }: { status: RojoStatus | RbxSyncStatus }) {
@@ -143,11 +146,13 @@ export function Launcher({
   logs,
   error,
   update,
+  updateDelayDays,
   onStartDevelopment,
   onStopAll,
   onOpenEditor,
   onNewProject,
   onDismissUpdate,
+  onUpdateDelayChange,
 }: LauncherProps) {
   const [editorLoading, setEditorLoading] = useState(false);
   const toolName =
@@ -270,13 +275,19 @@ export function Launcher({
 
       {/* Bottom bar */}
       <div className="mt-3 flex shrink-0 items-center justify-between">
-        <button
-          onClick={onNewProject}
-          className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New Project
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onNewProject}
+            className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Project
+          </button>
+          <SettingsPopover
+            updateDelayDays={updateDelayDays}
+            onUpdateDelayChange={onUpdateDelayChange}
+          />
+        </div>
         <button
           onClick={() => openExternal("https://github.com/Roxlit/installer/discussions")}
           className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-300"

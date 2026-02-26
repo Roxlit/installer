@@ -12,6 +12,7 @@ export function useUpdateChecker(config: RoxlitConfig | null) {
       const result = await invoke<UpdateInfo | null>("check_for_update", {
         lastCheck: config.lastUpdateCheck ?? null,
         dismissedVersion: config.dismissedVersion ?? null,
+        coolingDays: config.updateDelayDays ?? 7,
       });
 
       // Persist the check timestamp

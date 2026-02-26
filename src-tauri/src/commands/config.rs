@@ -23,6 +23,8 @@ pub struct RoxlitConfig {
     pub last_update_check: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dismissed_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_delay_days: Option<u32>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -47,6 +49,7 @@ pub async fn save_project(project: ProjectEntry) -> Result<RoxlitConfig> {
         last_active_project: None,
         last_update_check: None,
         dismissed_version: None,
+        update_delay_days: None,
     });
 
     // Expand tilde so paths are always absolute
@@ -86,6 +89,7 @@ pub async fn save_update_state(
         last_active_project: None,
         last_update_check: None,
         dismissed_version: None,
+        update_delay_days: None,
     });
 
     if last_update_check.is_some() {
@@ -94,6 +98,32 @@ pub async fn save_update_state(
     if dismissed_version.is_some() {
         config.dismissed_version = dismissed_version;
     }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| InstallerError::Custom(e.to_string()))?;
+    std::fs::write(&path, json)?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn save_settings(update_delay_days: u32) -> Result<()> {
+    let path = config_path()
+        .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
+
+    let mut config = load_config().await.unwrap_or(RoxlitConfig {
+        version: 1,
+        projects: vec![],
+        last_active_project: None,
+        last_update_check: None,
+        dismissed_version: None,
+        update_delay_days: None,
+    });
+
+    config.update_delay_days = Some(update_delay_days);
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
