@@ -149,7 +149,23 @@ pub async fn start_rojo(
             )))?;
     }
 
-    // Update .rbxsyncignore to include scripts/ if missing
+    // Ensure .luaurc exists
+    let luaurc = project_dir.join(".luaurc");
+    if !luaurc.exists() {
+        let _ = std::fs::write(&luaurc, crate::templates::luaurc());
+    }
+
+    // Ensure rbxsync.json exists
+    let rbxsync_json = project_dir.join("rbxsync.json");
+    if !rbxsync_json.exists() {
+        let name = project_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("my-game");
+        let _ = std::fs::write(&rbxsync_json, crate::templates::rbxsync_json(name));
+    }
+
+    // Ensure .rbxsyncignore exists and includes scripts/
     let rbxsyncignore = project_dir.join(".rbxsyncignore");
     if rbxsyncignore.exists() {
         if let Ok(content) = std::fs::read_to_string(&rbxsyncignore) {
@@ -160,10 +176,15 @@ pub async fn start_rojo(
                 );
             }
         }
+    } else {
+        let _ = std::fs::write(
+            &rbxsyncignore,
+            ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nscripts/\n",
+        );
     }
 
-    // Regenerate AI context if it still references the old src/ layout
-    regenerate_ai_context_if_stale(project_dir, &project_path);
+    // Ensure AI context file exists (or regenerate if stale)
+    ensure_ai_context(project_dir, &project_path);
 
     // Ensure project directories exist (user may have deleted scripts/)
     for subdir in &[
@@ -409,10 +430,9 @@ fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
     }
 }
 
-/// Regenerate AI context files if they still reference the old `src/` layout for scripts.
-/// Reads ~/.roxlit/config.json to find the AI tool for this project.
-fn regenerate_ai_context_if_stale(project_dir: &std::path::Path, project_path: &str) {
-    // Detect which AI context file exists and check if it's stale
+/// Ensure AI context files exist. Generates them if missing or regenerates if stale
+/// (e.g. still referencing old src/ layout). Reads ~/.roxlit/config.json for the AI tool.
+fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
     let context_files = [
         "CLAUDE.md",
         ".cursorrules",
@@ -421,10 +441,15 @@ fn regenerate_ai_context_if_stale(project_dir: &std::path::Path, project_path: &
         "AI-CONTEXT.md",
     ];
 
-    let needs_update = context_files.iter().any(|f| {
+    // Check if any context file exists at all
+    let any_exists = context_files
+        .iter()
+        .any(|f| project_dir.join(f).exists());
+
+    // Check if existing files are stale (old src/ layout)
+    let is_stale = context_files.iter().any(|f| {
         let path = project_dir.join(f);
         if let Ok(content) = std::fs::read_to_string(&path) {
-            // Old layout had "Write Luau code in `src/`" — new says `scripts/`
             content.contains("Write Luau code in `src/`")
                 || content.contains("Edit local files in `src/`. Rojo syncs")
         } else {
@@ -432,7 +457,7 @@ fn regenerate_ai_context_if_stale(project_dir: &std::path::Path, project_path: &
         }
     });
 
-    if !needs_update {
+    if any_exists && !is_stale {
         return;
     }
 
