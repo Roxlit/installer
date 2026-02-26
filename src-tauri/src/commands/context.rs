@@ -68,7 +68,7 @@ fn write_context_packs(project_root: &Path) -> Result<()> {
 }
 
 /// Writes MCP server configuration for the selected AI tool.
-fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
+pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
     let mcp_bin_name = if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" };
     let mcp_binary = dirs::home_dir()
         .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name))
