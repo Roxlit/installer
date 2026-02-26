@@ -145,6 +145,8 @@ pub fn ai_context(project_name: &str, mcp_available: bool) -> String {
 
 This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync provides sync for all instances (Parts, GUIs, Models, etc.) and an **MCP server** for real-time interaction with Studio.
 
+**IMPORTANT: You have DIRECT ACCESS to Roblox Studio via MCP tools.** You can read instances, create objects, set properties, execute Luau code, and run tests — all in real-time. Do NOT tell the user "I can't see your screen" or ask them to check things manually when you can use MCP tools to check yourself.
+
 ### How it works
 
 - **Rojo**: Syncs `.luau` scripts in ALL services (real-time, filesystem → Studio). One-directional.
@@ -175,9 +177,11 @@ If the user reports that instance sync isn't working, remind them to activate th
 - **Explore project structure** → read local `.rbxjson` files with Glob + Read (good for browsing, but may be up to 30s stale)
 - **Before any write** → always use MCP `get_instance` to confirm current state
 
-**Debugging & testing:**
-- `run_code` — execute Luau in Studio for debugging (print values, inspect runtime state)
+**Debugging & testing — USE THESE instead of asking the user to check things manually:**
+- `run_code` — execute Luau in Studio (print values, inspect runtime state, verify scripts loaded). If the user asks "is it working?", run code to CHECK instead of saying "I can't see your screen"
 - `run_test` — run tests inside Studio
+- `get_instance` — verify a script or instance exists in Studio's DataModel
+- Example: to check if a script is printing, use `run_code` with a test print and read the output
 
 ### Local `.rbxjson` Files — Cache, Not Source of Truth
 
@@ -465,6 +469,7 @@ This project includes curated Roblox documentation in `.roxlit/context/`. Before
 - `.roxlit/context/workspace-physics.md` — Parts, CFrame operations, raycasting, collision groups
 - `.roxlit/context/replication.md` — What replicates, FilteringEnabled, client vs server
 - `.roxlit/context/services-reference.md` — Service properties, enums, valid ranges
+- `.roxlit/context/studio-ui.md` — **READ THIS when helping with Studio UI**: panel locations, testing modes, localized names (Spanish etc.), common user issues
 
 Read `.roxlit/context/index.md` for an overview of all available packs.
 

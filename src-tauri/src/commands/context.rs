@@ -62,6 +62,7 @@ fn write_context_packs(project_root: &Path) -> Result<()> {
     fs::write(context_dir.join("workspace-physics.md"), templates::context_packs::workspace_physics())?;
     fs::write(context_dir.join("replication.md"), templates::context_packs::replication())?;
     fs::write(context_dir.join("services-reference.md"), templates::context_packs::services_reference())?;
+    fs::write(context_dir.join("studio-ui.md"), templates::context_packs::studio_ui())?;
 
     Ok(())
 }

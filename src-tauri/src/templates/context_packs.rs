@@ -21,6 +21,7 @@ These files contain curated Roblox/Luau documentation to help you write correct 
 | `workspace-physics.md` | Parts, CFrame, terrain, collision groups, physics |
 | `replication.md` | What replicates, FilteringEnabled rules, RunContext |
 | `services-reference.md` | Service properties, enums, valid ranges |
+| `studio-ui.md` | Studio UI: panel locations, testing modes, localized names, troubleshooting |
 
 ## How to Use
 
@@ -854,3 +855,116 @@ local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
 ```
 "#
 }
+
+/// Roblox Studio UI: panel locations, testing modes, localization, troubleshooting.
+pub fn studio_ui() -> &'static str {
+    r#"# Roblox Studio UI
+
+## Localization
+
+**Studio may be in Spanish or another language.** Do NOT assume English UI labels. Always mention both the English name and common translations when guiding users.
+
+| English | Spanish | Portuguese |
+|---------|---------|------------|
+| Output | Salida | Saída |
+| View | Vista | Exibir |
+| Explorer | Explorador | Explorador |
+| Properties | Propiedades | Propriedades |
+| Script (tab) | Secuencia de comandos | Script |
+| Plugins | Complementos | Plugins |
+| Home | Inicio | Início |
+| Play | Jugar / Probar | Jogar |
+| Run | Ejecutar | Executar |
+| Stop | Detener | Parar |
+| Command Bar | Barra de comandos | Barra de comandos |
+
+## Panel Locations
+
+### Output / Salida
+Where `print()` and `warn()` messages appear.
+
+**How to open:**
+- **Script tab** (top ribbon, center section) → click "Output" / "Salida"
+- OR: **View tab** → "Output" / "Salida"
+- The panel typically appears at the bottom of the screen
+
+### Explorer / Explorador
+Shows the full DataModel tree (all instances in the game).
+
+**How to open:**
+- **View tab** → "Explorer" / "Explorador"
+- Typically docked on the right side
+
+### Properties / Propiedades
+Shows properties of the currently selected instance.
+
+**How to open:**
+- **View tab** → "Properties" / "Propiedades"
+- Typically docked on the right side, below Explorer
+
+### Command Bar / Barra de comandos
+Execute Luau code directly in Studio (like a REPL).
+
+**How to open:**
+- **View tab** → "Command Bar" / "Barra de comandos"
+- Appears at the very bottom of the screen
+
+### Script Analysis / Análisis de scripts
+Shows Luau static analysis warnings and errors.
+
+**How to open:**
+- **Script tab** → "Script Analysis" / "Análisis de scripts"
+
+## Testing Modes
+
+| Mode | Shortcut | What it does |
+|------|----------|-------------|
+| **Play** | F5 | Starts local server + client. Required for testing scripts, RemoteEvents, player lifecycle |
+| **Run** | F8 | Starts only the server. Useful for server-side testing without a player joining |
+| **Stop** | Shift+F5 | Stops the current test session and returns to edit mode |
+
+**IMPORTANT:** Scripts do NOT run in edit mode. If a user says "my script isn't doing anything", the first question is: did you press Play (F5)?
+
+"Play Solo" is a legacy mode — prefer Play (F5) for accurate client-server behavior.
+
+## Common User Issues & Solutions
+
+### "My script isn't running"
+1. They need to press **Play (F5)** — scripts don't run in edit mode
+2. Check the script is in the right service (server scripts in ServerScriptService, client scripts in StarterPlayerScripts)
+3. Check Output/Salida for errors — syntax errors prevent the script from loading
+4. Verify the script synced: check Explorer for the script under the correct service
+
+### "I can't see print output"
+1. Output panel might be closed → guide them to **Script tab → Output/Salida**
+2. Make sure they're in Play mode (F5), not edit mode
+3. Check if the Output panel filter is set to show all messages (not just errors)
+
+### "Changes aren't syncing from VS Code/editor to Studio"
+1. Check that Rojo is running (green status in Roxlit launcher)
+2. Check that the Rojo plugin is connected in Studio (Plugins tab → Rojo → should show "Connected")
+3. If the plugin shows "Not Connected": click the Rojo plugin button to reconnect
+4. If the plugin doesn't appear at all: restart Studio (plugins load on startup)
+
+### "I connected but nothing happens in Studio"
+1. The Rojo plugin needs to be **activated manually** each Studio session
+2. Go to **Plugins tab** → find Rojo → click "Connect" or the Rojo icon
+3. A "Connected" indicator should appear
+
+### "Instance sync (RbxSync) isn't working"
+1. The RbxSync plugin also needs activation each session: **Plugins tab → RbxSync → Sync/Connect**
+2. Roxlit must be running `rbxsync serve` (check launcher)
+3. If the plugin doesn't appear: restart Studio
+
+## Ribbon Tabs (Top Menu Bar)
+
+The Studio ribbon has these main tabs:
+- **Home/Inicio**: Basic tools (Select, Move, Scale, Rotate, Part insertion)
+- **Model/Modelo**: Advanced object manipulation, constraints, effects
+- **Test/Probar**: Play, Run, Stop, client/server switching
+- **View/Vista**: Toggle panels (Output, Explorer, Properties, Command Bar, etc.)
+- **Script/Secuencia de comandos**: Appears when a script is open — Script Analysis, Output shortcut
+- **Plugins/Complementos**: Installed plugins (Rojo, RbxSync, etc.)
+"#
+}
+
