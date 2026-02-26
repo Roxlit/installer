@@ -865,11 +865,15 @@ pub fn studio_ui() -> &'static str {
 
 ## How to Guide Users
 
-**Studio may be in ANY language.** Do NOT assume English labels or guess translations. Instead:
-1. **Describe by position**: "the far-left dropdown in the mezzanine" not "the Play button"
-2. **Describe by function**: "the panel where print() messages appear (Output)"
-3. **Use landmarks**: "3rd group of icons in the Script tab toolbar"
-4. **Respond in the user's language** — match whatever language they write in.
+**Studio may be in ANY language.** All menu names, button labels, and panel names are localized. The names in this document are the **English reference names** — the user may see completely different labels depending on their Studio language.
+
+**Check the user's Studio language first:** Look in the project's AI context file (CLAUDE.md, .cursorrules, etc.) under "Your Notes" for a `Studio language:` entry. If it exists, use the correct localized names for that language. If it doesn't exist, **ask the user** what language their Studio is in, and tell them to add `Studio language: <language>` to the "Your Notes" section so you remember next time.
+
+**Rules for giving UI directions:**
+1. **Describe by position first**: "the 3rd group of icons in the toolbar" or "the far-left dropdown in the mezzanine"
+2. **Describe by function**: "the panel where print() messages appear"
+3. **Use English names only as reference** — when talking to the user, describe what the element does or where it is. If you know their Studio language, use the localized name. If not, describe by position/function and mention the English reference name in parentheses.
+4. **Respond in the user's language** — always.
 
 ## Studio Layout — Three Zones at the Top
 

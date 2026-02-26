@@ -139,7 +139,7 @@ pub fn rbxsync_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.5.1";
+pub const CONTEXT_VERSION: &str = "0.5.2";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -398,6 +398,7 @@ src/                                    ← Instance cache (.rbxjson, managed by
 
 ## Key Rules
 
+- **Language**: ALWAYS respond in the user's language. If they write in Spanish, respond in Spanish. If English, respond in English. Your explanations, instructions, and conversation must match the user's language. For code comments, default to English unless the user asks otherwise.
 - **Never use `wait()`** → use `task.wait()` instead
 - **Never trust the client** → validate everything on the server
 - **Never store secrets in ReplicatedStorage** → clients can read it
@@ -428,6 +429,9 @@ This project was set up with Roxlit. The Roxlit launcher manages Rojo and RbxSyn
 {USER_NOTES_MARKER}
 
 Add your own project-specific notes, rules, or instructions below this line. Roxlit will preserve this section when updating the context above.
+
+Settings the AI will look for here:
+- `Studio language: <language>` — so the AI uses correct localized names for Studio UI elements (e.g., `Studio language: Spanish`)
 
 "#
     )
