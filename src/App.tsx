@@ -19,6 +19,7 @@ import type { AppMode, ProjectEntry, RoxlitConfig } from "./lib/types";
 export default function App() {
   const [mode, setMode] = useState<AppMode>("loading");
   const [config, setConfig] = useState<RoxlitConfig | null>(null);
+  const [updateDelayDays, setUpdateDelayDays] = useState(7);
   const installer = useInstaller();
   const launcher = useLauncher();
   const { update, dismissUpdate } = useUpdateChecker(config);
@@ -29,6 +30,7 @@ export default function App() {
       .then((loadedConfig) => {
         if (loadedConfig && loadedConfig.projects.length > 0) {
           setConfig(loadedConfig);
+          setUpdateDelayDays(loadedConfig.updateDelayDays ?? 7);
           const active =
             loadedConfig.projects.find(
               (p) => p.path === loadedConfig.lastActiveProject
@@ -58,6 +60,18 @@ export default function App() {
     await launcher.stopAll();
     installer.reset();
     setMode("installer");
+  };
+
+  const handleUpdateDelayChange = async (days: number) => {
+    setUpdateDelayDays(days);
+    setConfig((prev) =>
+      prev ? { ...prev, updateDelayDays: days } : prev
+    );
+    try {
+      await invoke("save_settings", { updateDelayDays: days });
+    } catch {
+      // Silent failure — settings save is non-critical
+    }
   };
 
   const aiToolName =
@@ -92,11 +106,13 @@ export default function App() {
           logs={launcher.logs}
           error={launcher.error}
           update={update}
+          updateDelayDays={updateDelayDays}
           onStartDevelopment={launcher.startDevelopment}
           onStopAll={launcher.stopAll}
           onOpenEditor={launcher.openEditor}
           onNewProject={handleNewProject}
           onDismissUpdate={dismissUpdate}
+          onUpdateDelayChange={handleUpdateDelayChange}
         />
       </div>
     );

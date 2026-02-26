@@ -126,6 +126,7 @@ export interface RoxlitConfig {
   lastActiveProject: string | null;
   lastUpdateCheck?: string | null;
   dismissedVersion?: string | null;
+  updateDelayDays?: number | null;
 }
 
 export interface UpdateInfo {

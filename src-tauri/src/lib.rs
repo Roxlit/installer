@@ -99,6 +99,7 @@ pub fn run() {
             commands::config::load_config,
             commands::config::save_project,
             commands::config::save_update_state,
+            commands::config::save_settings,
             commands::update::check_for_update,
             commands::rojo::start_rojo,
             commands::rojo::stop_rojo,

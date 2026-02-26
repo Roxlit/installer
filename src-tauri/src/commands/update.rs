@@ -74,13 +74,14 @@ fn is_newer_version(local: &str, remote: &str) -> bool {
 }
 
 const RATE_LIMIT_SECS: i64 = 24 * 3600; // 24 hours
-const COOLING_PERIOD_SECS: i64 = 7 * 24 * 3600; // 7 days
 
 #[tauri::command]
 pub async fn check_for_update(
     last_check: Option<String>,
     dismissed_version: Option<String>,
+    cooling_days: Option<u32>,
 ) -> Result<Option<UpdateInfo>> {
+    let cooling_secs = (cooling_days.unwrap_or(7) as i64) * 24 * 3600;
     // Rate limit: skip if last check was less than 24h ago
     if let Some(ref ts) = last_check {
         if let Some(last_unix) = parse_iso8601_to_unix(ts) {
@@ -139,10 +140,10 @@ pub async fn check_for_update(
         return Ok(None);
     }
 
-    // Cooling period: release must be at least 7 days old
+    // Cooling period: release must be old enough (configurable, default 7 days)
     let published_at = body["published_at"].as_str().unwrap_or_default();
     if let Some(pub_unix) = parse_iso8601_to_unix(published_at) {
-        if now_unix() - pub_unix < COOLING_PERIOD_SECS {
+        if now_unix() - pub_unix < cooling_secs {
             return Ok(None);
         }
     } else {
