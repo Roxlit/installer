@@ -602,11 +602,13 @@ fn ensure_mcp_config(project_dir: &std::path::Path, ai_tool: &str) {
 
     // Check if MCP config already exists for this AI tool
     let config_exists = match ai_tool {
-        "claude" => project_dir.join(".claude").join("settings.json").exists(),
+        "claude" => project_dir.join(".mcp.json").exists(),
         "cursor" => project_dir.join(".cursor").join("mcp.json").exists(),
         "vscode" => project_dir.join(".vscode").join("mcp.json").exists(),
-        "windsurf" => project_dir.join(".windsurf").join("mcp.json").exists(),
-        _ => project_dir.join("mcp-config.json").exists(),
+        "windsurf" => dirs::home_dir()
+            .map(|h| h.join(".codeium").join("windsurf").join("mcp_config.json").exists())
+            .unwrap_or(false),
+        _ => project_dir.join(".mcp.json").exists(),
     };
 
     if config_exists {
