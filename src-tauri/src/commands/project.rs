@@ -49,6 +49,12 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
         templates::shared_module(),
     )?;
 
+    // Debug module — studio-only logging (silent in production)
+    fs::write(
+        root.join("scripts").join("ReplicatedStorage").join("Debug.luau"),
+        templates::debug_module(),
+    )?;
+
     // RbxSync config — exclude services Rojo handles, sync only instances
     fs::write(
         root.join("rbxsync.json"),

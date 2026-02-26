@@ -196,6 +196,9 @@ pub async fn run_installation(
         }
     }
 
+    // Step 4b: Install RoxlitDebug plugin (non-critical, no extra step count)
+    install_debug_plugin(&config, &on_event);
+
     // Step 5: Create project structure
     step_index += 1;
     on_event
@@ -741,4 +744,46 @@ async fn kill_process_by_name(name: &str) {
 
     // Give the OS a moment to release file handles
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+}
+
+/// Install the RoxlitDebug Studio plugin for capturing Studio output.
+/// Non-critical — emits a warning and continues if it fails.
+fn install_debug_plugin(config: &InstallConfig, on_event: &Channel<SetupEvent>) {
+    let plugins_dir = match &config.plugins_path {
+        Some(path) => PathBuf::from(path),
+        None => {
+            if cfg!(target_os = "windows") {
+                match dirs::data_local_dir() {
+                    Some(d) => d.join("Roblox").join("Plugins"),
+                    None => return,
+                }
+            } else if cfg!(target_os = "macos") {
+                match dirs::home_dir() {
+                    Some(d) => d.join("Library").join("Roblox").join("Plugins"),
+                    None => return,
+                }
+            } else {
+                return;
+            }
+        }
+    };
+
+    if std::fs::create_dir_all(&plugins_dir).is_err() {
+        let _ = on_event.send(SetupEvent::StepWarning {
+            step: "plugin".into(),
+            message: "Could not create plugins directory for RoxlitDebug".into(),
+        });
+        return;
+    }
+
+    let plugin_path = plugins_dir.join("RoxlitDebug.rbxmx");
+    match std::fs::write(&plugin_path, crate::templates::debug_plugin_rbxmx()) {
+        Ok(_) => {}
+        Err(e) => {
+            let _ = on_event.send(SetupEvent::StepWarning {
+                step: "plugin".into(),
+                message: format!("Could not install RoxlitDebug plugin: {e}"),
+            });
+        }
+    }
 }

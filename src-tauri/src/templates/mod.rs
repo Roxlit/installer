@@ -111,6 +111,35 @@ return Shared
 "#
 }
 
+/// Returns the Debug module for studio-only logging.
+/// `Debug.print()` / `Debug.warn()` only output in Studio, silent in production.
+pub fn debug_module() -> &'static str {
+    r#"--!strict
+-- Debug logging module. Use Debug.print() instead of print() so logs
+-- are visible in Studio but stripped in production.
+
+local RunService = game:GetService("RunService")
+
+local IS_STUDIO = RunService:IsStudio()
+
+local Debug = {}
+
+function Debug.print(...: any)
+	if IS_STUDIO then
+		print(...)
+	end
+end
+
+function Debug.warn(...: any)
+	if IS_STUDIO then
+		warn(...)
+	end
+end
+
+return Debug
+"#
+}
+
 /// Returns the rbxsync.json configuration.
 /// Only excludes Roblox internals (CoreGui, CorePackages). RbxSync extracts instances
 /// (.rbxjson) from Studio for backup/exploration. Scripts (.luau) are managed by Rojo.
@@ -134,7 +163,125 @@ pub fn rbxsync_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.6.2";
+pub const CONTEXT_VERSION: &str = "0.7.0";
+
+/// Debug plugin version — bump to force re-installation when plugin code changes.
+pub const DEBUG_PLUGIN_VERSION: &str = "1.0.0";
+
+/// Returns the Luau source code for the RoxlitDebug Studio plugin.
+/// Captures LogService.MessageOut and sends batches to the Roxlit log server via HTTP.
+pub fn debug_plugin_luau() -> String {
+    format!(
+        r#"--!strict
+-- RoxlitDebug v{version} — Studio Output capture for AI debugging
+-- Sends LogService output to the Roxlit launcher log server.
+-- If the launcher is not running, the plugin silently does nothing.
+
+local HttpService = game:GetService("HttpService")
+local LogService = game:GetService("LogService")
+
+local SERVER_URL = "http://127.0.0.1:19556"
+local BATCH_INTERVAL = 0.5
+local BATCH_MAX = 50
+local HEALTH_INTERVAL = 10
+
+local buffer: {{[string]: any}} = {{}}
+local serverAlive = false
+local lastHealthCheck = 0
+
+local function checkHealth()
+	local ok, _ = pcall(function()
+		HttpService:GetAsync(SERVER_URL .. "/health")
+	end)
+	serverAlive = ok
+	lastHealthCheck = os.clock()
+end
+
+local function flushBuffer()
+	if #buffer == 0 or not serverAlive then
+		return
+	end
+
+	local batch = buffer
+	buffer = {{}}
+
+	pcall(function()
+		local json = HttpService:JSONEncode(batch)
+		HttpService:PostAsync(SERVER_URL .. "/log", json, Enum.HttpContentType.ApplicationJson)
+	end)
+end
+
+local function levelFromType(messageType: Enum.MessageType): string
+	if messageType == Enum.MessageType.MessageError then
+		return "error"
+	elseif messageType == Enum.MessageType.MessageWarning then
+		return "warn"
+	end
+	return "info"
+end
+
+LogService.MessageOut:Connect(function(message: string, messageType: Enum.MessageType)
+	if not serverAlive then
+		return
+	end
+
+	table.insert(buffer, {{
+		message = message,
+		level = levelFromType(messageType),
+		timestamp = os.clock(),
+	}})
+
+	if #buffer >= BATCH_MAX then
+		flushBuffer()
+	end
+end)
+
+-- Initial health check
+checkHealth()
+
+-- Periodic flush + health check
+task.spawn(function()
+	while true do
+		task.wait(BATCH_INTERVAL)
+
+		if os.clock() - lastHealthCheck >= HEALTH_INTERVAL then
+			checkHealth()
+		end
+
+		flushBuffer()
+	end
+end)
+"#,
+        version = DEBUG_PLUGIN_VERSION
+    )
+}
+
+/// Returns the .rbxmx XML wrapper for the debug plugin, ready to drop into
+/// the Studio local plugins folder.
+pub fn debug_plugin_rbxmx() -> String {
+    let luau = debug_plugin_luau();
+    // Escape XML special chars in the Luau source
+    let escaped = luau
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+
+    format!(
+        r#"<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+  <Item class="Script" referent="RoxlitDebug">
+    <Properties>
+      <string name="Name">RoxlitDebug</string>
+      <ProtectedString name="Source"><![CDATA[{luau}]]></ProtectedString>
+      <bool name="Disabled">false</bool>
+      <token name="RunContext">1</token>
+    </Properties>
+  </Item>
+</roblox>
+"#,
+        luau = escaped
+    )
+}
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -185,11 +332,24 @@ If the user reports that instance sync isn't working, remind them to activate th
 - **Explore project structure** → read local `.rbxjson` files with Glob + Read (good for browsing, but may be up to 30s stale)
 - **Before any write** → always use MCP `get_instance` to confirm current state
 
-**Debugging & testing — USE THESE instead of asking the user to check things manually:**
-- `run_code` — execute Luau in Studio (print values, inspect runtime state, verify scripts loaded). If the user asks "is it working?", run code to CHECK instead of saying "I can't see your screen"
-- `run_test` — run tests inside Studio
-- `get_instance` — verify a script or instance exists in Studio's DataModel
-- Example: to check if a script is printing, use `run_code` with a test print and read the output
+**Debugging & testing — MANDATORY WORKFLOW:**
+
+Every time you create or modify something, you MUST verify it works. Never say "done" or "it should work" without verifying.
+
+**The debugging loop:** create/edit → verify with `get_instance` → playtest with `run_test` → read errors → fix → repeat
+
+Tools:
+- `get_instance` — verify an instance or script exists in Studio's DataModel. Always use this after creating anything.
+- `run_test` — starts a playtest session in Studio, captures ALL console output (prints, warnings, errors), stops the session, and returns the full output. This is your #1 debugging tool.
+- `run_code` — execute arbitrary Luau in Studio to inspect runtime state (check property values, verify SoundIds, test expressions). Use this for quick checks without a full playtest.
+
+**Common debugging patterns:**
+- "car doesn't move" → `run_test`, read the output for errors (missing VehicleSeat? wrong property name?)
+- "sound doesn't play" → `run_code` to check `game.Workspace.Model.Sound.SoundId` and verify it's not empty
+- "script doesn't run" → `get_instance` to verify the script exists in the right location, then `run_test` to see if there are errors
+- "GUI doesn't show" → `get_instance` to check ScreenGui.Enabled, then `run_test` for errors
+
+**MANDATORY: Never tell the user "I can't see your screen" when you have MCP tools. Check yourself.**
 
 ### Local `.rbxjson` Files — Cache, Not Source of Truth
 
@@ -324,6 +484,21 @@ Roxlit automatically backs up `.rbxjson` files before each Studio extract:
 
 If the user reports lost changes to instances, check `.roxlit/backups/` for recent backups. You can diff the backup files against current files to find what changed.
 
+### Debugging Without MCP
+
+Without MCP tools, you cannot directly run code or tests in Studio. But Roxlit captures Studio output automatically:
+
+1. **Ask them to playtest**: Press F5 (Play) in Studio to run the game
+2. **Read the logs**: `.roxlit/logs/latest.log` captures Studio console output (prints, warnings, errors) in real-time — check `[studio-err]` for errors first
+3. **If logs are empty**: The RoxlitDebug plugin may not be loaded yet — ask the user to restart Studio once so it picks up the plugin
+4. **Fallback**: Ask the user to check the Output panel in Studio, or click "Copy All" in the Roxlit launcher terminal
+5. **Analyze the error**: Once you have the error text, diagnose and fix it
+
+Common patterns:
+- `"X is not a valid member of Y"` → wrong property name or instance path
+- `"attempt to index nil"` → a `FindFirstChild` or variable is nil, check the instance exists
+- Script not running at all → verify the file is in the right `scripts/` subfolder and has the correct `.server.luau` or `.client.luau` extension
+
 "#
     };
 
@@ -411,7 +586,64 @@ Workspace/
 - **Never call DataStore without `pcall()`** → DataStore calls can fail
 - **Testing**: Scripts don't run in edit mode. Press Play (F5) for server + client, Run (F8) for server-only.
 - **MANDATORY — Studio UI**: Before telling the user where to find ANYTHING in Studio (Output, panels, menus, buttons), you MUST first read `.roxlit/context/studio-ui.md`. Do NOT rely on your own knowledge of Studio — it is outdated and wrong (e.g., there is NO "View" tab in the new Studio UI). Read the file first, then answer.
-{rbxsync_section}## Roblox Context Packs
+{rbxsync_section}## Studio Output Logs
+
+Roxlit captures **all Roblox Studio output** (prints, warnings, errors) in real-time via a local plugin. When the user presses Play (F5), every `print()`, `warn()`, and `error()` from their scripts appears in `.roxlit/logs/latest.log` alongside Rojo and RbxSync logs.
+
+### Log Prefixes
+
+- `[studio]` — print() output (info)
+- `[studio-warn]` — warn() output
+- `[studio-err]` — runtime errors, script errors
+- `[rojo]` / `[rojo-err]` — Rojo sync output
+- `[rbxsync]` / `[rbxsync-err]` — RbxSync output
+
+### MANDATORY: Code Instrumentation with Debug Module
+
+Every Luau script you create or modify MUST include strategic debug prints for debugging visibility. This is NOT optional — it is how you (the AI) get runtime feedback.
+
+**IMPORTANT:** Use `Debug.print()` / `Debug.warn()` instead of raw `print()` / `warn()`. The Debug module (in `ReplicatedStorage/Debug.luau`) only outputs in Studio — silent in production. This prevents leaking internal state to players via the client console (F9).
+
+```lua
+local Debug = require(game.ReplicatedStorage.Debug)
+```
+
+**Format**: `Debug.print("[ScriptName] Description:", value)`
+
+**Where to add debug prints:**
+- At script/function start: `Debug.print("[DoorController] Initialized")`
+- Before important operations: `Debug.print("[DataManager] Saving data for:", player.Name)`
+- After important operations: `Debug.print("[DataManager] Save complete, entries:", #data)`
+- On errors/edge cases: `Debug.warn("[VehicleSeat] No wheels found in model:", model.Name)`
+- With relevant values: `Debug.print("[RoundManager] Round started, players:", #players, "map:", mapName)`
+
+**Example:**
+```lua
+--!strict
+local Players = game:GetService("Players")
+local Debug = require(game.ReplicatedStorage.Debug)
+
+Debug.print("[GameManager] Script initialized")
+
+Players.PlayerAdded:Connect(function(player: Player)
+    Debug.print("[GameManager] Player joined:", player.Name, "total:", #Players:GetPlayers())
+    -- game logic here
+end)
+```
+
+**When to use raw `print()` instead:** Only for output that you intentionally want players to see in production (e.g., admin commands feedback). For all debugging and development logging, always use `Debug.print()`.
+
+Without debug prints, debugging is guesswork. With them, you can read `.roxlit/logs/latest.log` and see exactly what happened.
+
+### Debugging Workflow
+
+1. **Read `.roxlit/logs/latest.log` FIRST** — the answer is almost always there
+2. Search for `[studio-err]` to find runtime errors
+3. Follow `[ScriptName]` prints to trace execution flow
+4. If prints are missing, add more and ask the user to playtest again
+5. **Never guess** — always read the actual error before attempting a fix
+
+## Roblox Context Packs
 
 This project includes curated Roblox documentation in `.roxlit/context/`. Before writing code that involves a specific system, **read the relevant file**:
 
@@ -429,7 +661,8 @@ Read `.roxlit/context/index.md` for an overview of all available packs.
 
 This project was set up with Roxlit. The Roxlit launcher manages Rojo and RbxSync processes automatically.
 
-- **Copy logs**: If there are errors, the user can click "Copy All" in the Roxlit launcher terminal to copy all logs. They can then paste them here for you to diagnose.
+- **Session logs on disk**: Roxlit captures ALL output to `.roxlit/logs/latest.log` — Rojo, RbxSync, AND Roblox Studio console (prints, warnings, errors). You can read this file to diagnose issues without asking the user to copy-paste. Previous sessions are saved as `.roxlit/logs/session-<timestamp>.log` (up to 10 retained).
+- **Copy logs from UI**: The user can also click "Copy All" in the Roxlit launcher terminal to copy all logs and paste them here.
 - **Do NOT remove or modify the Roxlit-generated sections above.** They are auto-updated by Roxlit when new versions are available.
 
 {USER_NOTES_MARKER}
