@@ -607,12 +607,94 @@ local modelCFrame = model:GetPivot()
 | `FallenPartsDestroyHeight` | -500 | Y level where parts are destroyed |
 | `StreamingEnabled` | true | Instance streaming for large places |
 
+## Instance Organization
+
+ALWAYS group related parts into a Model. Never leave loose Parts or Scripts in Workspace root.
+
+### Structure Pattern
+
+```
+-- GOOD: Everything grouped in a Model
+Door (Model, PrimaryPart = DoorPart)
+  ├── DoorPart (Part, the part that moves)
+  │   └── ProximityPrompt (triggers interaction)
+  ├── Frame (Part)
+  ├── Wall (Part)
+  └── DoorController (Script, controls this door)
+
+-- BAD: Loose parts scattered in Workspace
+Workspace/
+  Door (Part)
+  DoorFrame (Part)
+  DoorWall (Part)
+  DoorController (Script)  ← where does this belong? unclear
+```
+
+### Rules
+
+- **Group related parts in a Model**: Door + frame + wall + script = one Model
+- **Set PrimaryPart**: Every Model needs a PrimaryPart for `PivotTo()` to work
+- **Scripts inside their Model**: A script that controls a door goes inside the Door Model. Game-wide scripts go in ServerScriptService
+- **Name descriptively**: `DoorPart`, `Frame`, `Wall` — not `Part`, `Part2`
+- **Nested Models for complex objects**: A house could have sub-Models for each room, each door, etc.
+
+```luau
+-- Creating a well-organized Model
+local doorModel = Instance.new("Model")
+doorModel.Name = "Door"
+doorModel.Parent = workspace
+
+local doorPart = Instance.new("Part")
+doorPart.Name = "DoorPart"
+doorPart.Parent = doorModel
+
+doorModel.PrimaryPart = doorPart -- ALWAYS set this
+
+local prompt = Instance.new("ProximityPrompt")
+prompt.Parent = doorPart -- Prompt goes on the interactable part
+```
+
+### Script Placement Guide
+
+| Script type | Where it goes | Example |
+|-------------|---------------|---------|
+| Controls a specific object | Inside that object's Model | DoorController inside Door Model |
+| Game-wide system | `scripts/ServerScriptService/` | RoundManager, DataSaveSystem |
+| Player-specific client logic | `scripts/StarterPlayer/StarterPlayerScripts/` | CameraController, InputHandler |
+| Character-specific logic | `scripts/StarterPlayer/StarterCharacterScripts/` | AnimationController |
+| Shared utilities | `scripts/ReplicatedStorage/` | Utility modules used by both server and client |
+| GUI logic | `scripts/StarterGui/` | Menu handlers, HUD updates |
+
+## Z-Fighting (Overlapping Surfaces)
+
+When two surfaces occupy the same position, the renderer flickers between them (Z-fighting). This is common when building frames, walls, doors, and decorative trim.
+
+**ALWAYS offset overlapping surfaces by at least 0.01 studs.** Or make one part slightly thicker so surfaces don't share the same plane.
+
+```luau
+-- BAD: Wall and frame share the same surface — Z-fighting
+wall.Size = Vector3.new(10, 10, 1)
+frame.Size = Vector3.new(2, 7, 1) -- Same depth as wall
+frame.Position = wall.Position -- Surfaces overlap
+
+-- GOOD: Frame is slightly thicker than the wall
+wall.Size = Vector3.new(10, 10, 1)
+frame.Size = Vector3.new(2, 7, 1.05) -- 0.05 studs thicker — no overlap
+frame.Position = wall.Position
+```
+
+Rules:
+- **Frames/trim around doors or windows**: Make the frame 0.05–0.1 studs thicker than the wall on each visible side
+- **Decals on Parts**: Use Decal or SurfaceGui objects instead of overlapping thin Parts
+- **Floors on terrain**: Raise floor parts at least 0.05 studs above terrain level
+
 ## Anti-Patterns
 
 - **NEVER set Position on welded parts**: Use CFrame or PivotTo
 - **NEVER forget to set PrimaryPart on models**: PivotTo won't work correctly without it
 - **NEVER use deprecated BodyVelocity/BodyForce**: Use LinearVelocity, AlignPosition, VectorForce constraints instead
 - **NEVER create thousands of unanchored parts**: Causes massive physics lag. Anchor parts that don't need physics
+- **NEVER place two surfaces at the exact same position**: Causes Z-fighting (texture flickering). Offset by at least 0.01 studs
 "#
 }
 

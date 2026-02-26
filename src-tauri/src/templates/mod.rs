@@ -134,7 +134,7 @@ pub fn rbxsync_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.6.0";
+pub const CONTEXT_VERSION: &str = "0.6.1";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -379,6 +379,28 @@ src/                                    ← Instance cache (.rbxjson, managed by
 - Require modules relatively: `require(script.Parent.ModuleName)`
 - Prefer `task.wait()` over `wait()`, `task.spawn()` over `spawn()`
 - Add `--!strict` at the top of every file
+
+## Instance Organization
+
+When creating instances (Parts, Models, GUIs), follow these rules to keep the project clean from the start:
+
+- **Group related parts in a Model**: A door with its frame and wall = one Model, not 3 loose Parts in Workspace
+- **Set PrimaryPart on every Model**: Required for `Model:PivotTo()` to work
+- **Scripts that control a specific object go INSIDE that object's Model**: A DoorController script belongs inside the Door Model, not loose in Workspace
+- **Game-wide systems go in `scripts/ServerScriptService/`**: Things like a round manager, data save system, or admin commands
+- **Name everything descriptively**: `Door`, `DoorPart`, `Frame`, `Wall` — not `Part`, `Part2`, `Model`
+- **Never leave Parts or Scripts loose in Workspace root**: Always organize under a Model or Folder
+
+Example — a door with proximity interaction:
+```
+Workspace/
+  Door (Model, PrimaryPart = DoorPart)
+    ├── DoorPart (Part) ← the part that rotates
+    │   └── ProximityPrompt ← built-in Roblox class for "Press E" interactions
+    ├── Frame (Part)
+    ├── Wall (Part)
+    └── DoorController (Script) ← controls this specific door
+```
 
 ## Key Rules
 
