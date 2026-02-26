@@ -166,7 +166,7 @@ pub fn rbxsync_json(project_name: &str) -> String {
 pub const CONTEXT_VERSION: &str = "0.7.0";
 
 /// Debug plugin version — bump to force re-installation when plugin code changes.
-pub const DEBUG_PLUGIN_VERSION: &str = "1.0.0";
+pub const DEBUG_PLUGIN_VERSION: &str = "1.0.1";
 
 /// Returns the Luau source code for the RoxlitDebug Studio plugin.
 /// Captures LogService.MessageOut and sends batches to the Roxlit log server via HTTP.
@@ -260,13 +260,8 @@ end)
 /// the Studio local plugins folder.
 pub fn debug_plugin_rbxmx() -> String {
     let luau = debug_plugin_luau();
-    // Escape XML special chars in the Luau source
-    let escaped = luau
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;");
-
+    // CDATA treats content as literal text — no XML escaping needed.
+    // RunContext 0 = Legacy (default for plugins in the local Plugins folder).
     format!(
         r#"<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
   <Item class="Script" referent="RoxlitDebug">
@@ -274,12 +269,11 @@ pub fn debug_plugin_rbxmx() -> String {
       <string name="Name">RoxlitDebug</string>
       <ProtectedString name="Source"><![CDATA[{luau}]]></ProtectedString>
       <bool name="Disabled">false</bool>
-      <token name="RunContext">1</token>
     </Properties>
   </Item>
 </roblox>
 "#,
-        luau = escaped
+        luau = luau
     )
 }
 

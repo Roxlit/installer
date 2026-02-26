@@ -638,17 +638,27 @@ fn ensure_mcp_config(project_dir: &std::path::Path, ai_tool: &str) {
     }
 
     // Check if MCP config already exists for this AI tool
-    let config_exists = match ai_tool {
-        "claude" => project_dir.join(".mcp.json").exists(),
-        "cursor" => project_dir.join(".cursor").join("mcp.json").exists(),
-        "vscode" => project_dir.join(".vscode").join("mcp.json").exists(),
+    let config_path = match ai_tool {
+        "claude" => Some(project_dir.join(".mcp.json")),
+        "cursor" => Some(project_dir.join(".cursor").join("mcp.json")),
+        "vscode" => Some(project_dir.join(".vscode").join("mcp.json")),
         "windsurf" => dirs::home_dir()
-            .map(|h| h.join(".codeium").join("windsurf").join("mcp_config.json").exists())
-            .unwrap_or(false),
-        _ => project_dir.join(".mcp.json").exists(),
+            .map(|h| h.join(".codeium").join("windsurf").join("mcp_config.json")),
+        _ => Some(project_dir.join(".mcp.json")),
     };
 
-    if config_exists {
+    if let Some(ref path) = config_path {
+        if path.exists() {
+            // Regenerate if the existing config has Windows backslashes in paths
+            // (bug: \b = backspace and \r = carriage return in JSON, corrupts the file).
+            let has_backslash_bug = std::fs::read_to_string(path)
+                .map(|c| c.contains(".roxlit\\"))
+                .unwrap_or(false);
+            if !has_backslash_bug {
+                return;
+            }
+        }
+    } else {
         return;
     }
 

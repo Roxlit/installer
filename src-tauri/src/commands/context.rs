@@ -74,7 +74,9 @@ pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
         .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name))
         .ok_or_else(|| crate::error::InstallerError::Custom("Cannot find home directory".into()))?;
 
-    let mcp_path_str = mcp_binary.to_string_lossy().to_string();
+    // Use forward slashes — Windows accepts them in paths, and backslashes
+    // break JSON (e.g. \b = backspace, \r = carriage return).
+    let mcp_path_str = mcp_binary.to_string_lossy().replace('\\', "/");
 
     // Claude Code uses .mcp.json at project root for MCP config.
     // Cursor, VS Code, and Windsurf use tool-specific directories.
