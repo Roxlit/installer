@@ -183,6 +183,9 @@ pub async fn start_rojo(
         );
     }
 
+    // Ensure MCP binary exists (download if missing)
+    ensure_mcp_binary().await;
+
     // Ensure AI context file exists (or regenerate if stale)
     ensure_ai_context(project_dir, &project_path);
 
@@ -430,11 +433,60 @@ fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
     }
 }
 
+/// Download rbxsync-mcp binary if it doesn't exist yet.
+/// This handles upgrades from versions that didn't include MCP.
+async fn ensure_mcp_binary() {
+    let mcp_bin_name = if cfg!(target_os = "windows") {
+        "rbxsync-mcp.exe"
+    } else {
+        "rbxsync-mcp"
+    };
+
+    let bin_dir = match dirs::home_dir() {
+        Some(h) => h.join(".roxlit").join("bin"),
+        None => return,
+    };
+
+    let mcp_path = bin_dir.join(mcp_bin_name);
+    if mcp_path.exists() {
+        return; // Already downloaded
+    }
+
+    // Determine download URL
+    let url = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "https://github.com/Smokestack-Games/rbxsync/releases/download/v1.3.0/rbxsync-mcp-macos-arm64".to_string()
+    } else if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+        "https://github.com/Roxlit/installer/releases/latest/download/rbxsync-mcp.exe".to_string()
+    } else {
+        return; // No MCP for this platform
+    };
+
+    // Best-effort download — don't block launcher startup if it fails
+    let _ = tokio::fs::create_dir_all(&bin_dir).await;
+    if let Ok(response) = reqwest::get(&url).await {
+        if response.status().is_success() {
+            if let Ok(bytes) = response.bytes().await {
+                let _ = tokio::fs::write(&mcp_path, &bytes).await;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = tokio::fs::set_permissions(
+                        &mcp_path,
+                        std::fs::Permissions::from_mode(0o755),
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+}
+
 /// Ensure AI context files exist and are up to date.
 ///
 /// Checks for a version marker in the existing context file. If the marker is missing
 /// (pre-versioning file) or the version is older than the current CONTEXT_VERSION,
 /// the file is regenerated. User notes (everything after "## Your Notes") are preserved.
+/// Also ensures MCP config exists if the MCP binary is available.
 fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
     use crate::templates;
 
@@ -452,6 +504,12 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
         .map(|f| project_dir.join(f))
         .find(|p| p.exists());
 
+    // Check if MCP binary is available (for context variant detection)
+    let mcp_bin_name = if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" };
+    let mcp_available = dirs::home_dir()
+        .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name).exists())
+        .unwrap_or(false);
+
     // Check if regeneration is needed
     let needs_regen = match &existing_file {
         None => true, // No context file at all
@@ -466,25 +524,15 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
                     let end = line.find("-->")?;
                     Some(line[start..end].trim())
                 });
-            match file_version {
+            let version_stale = match file_version {
                 None => true, // No version marker → pre-versioning file, always regenerate
                 Some(v) => v != templates::CONTEXT_VERSION,
-            }
+            };
+            // Also regenerate if MCP is now available but context was generated without it
+            let mcp_missing_from_context = mcp_available && !content.contains("RbxSync MCP server");
+            version_stale || mcp_missing_from_context
         }
     };
-
-    if !needs_regen {
-        return;
-    }
-
-    // Extract user notes from existing file before regenerating
-    let user_notes = existing_file.as_ref().and_then(|path| {
-        let content = std::fs::read_to_string(path).ok()?;
-        let marker = templates::USER_NOTES_MARKER;
-        let marker_pos = content.find(marker)?;
-        // Keep everything from the marker line onward (including the marker itself)
-        Some(content[marker_pos..].to_string())
-    });
 
     // Read config to find ai_tool for this project
     let ai_tool = dirs::home_dir()
@@ -498,6 +546,21 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
                 .and_then(|p| p["aiTool"].as_str().map(String::from))
         })
         .unwrap_or_else(|| "claude".to_string());
+
+    // Always ensure MCP config exists if binary is available (even if CLAUDE.md is up to date)
+    ensure_mcp_config(project_dir, &ai_tool);
+
+    if !needs_regen {
+        return;
+    }
+
+    // Extract user notes from existing file before regenerating
+    let user_notes = existing_file.as_ref().and_then(|path| {
+        let content = std::fs::read_to_string(path).ok()?;
+        let marker = templates::USER_NOTES_MARKER;
+        let marker_pos = content.find(marker)?;
+        Some(content[marker_pos..].to_string())
+    });
 
     let project_name = project_dir
         .file_name()
@@ -518,6 +581,42 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
             }
         }
     }
+}
+
+/// Ensure MCP config file exists if the MCP binary is available.
+/// This handles the case where a user upgrades Roxlit and gets MCP for the first time.
+fn ensure_mcp_config(project_dir: &std::path::Path, ai_tool: &str) {
+    let mcp_bin_name = if cfg!(target_os = "windows") {
+        "rbxsync-mcp.exe"
+    } else {
+        "rbxsync-mcp"
+    };
+
+    let mcp_available = dirs::home_dir()
+        .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name).exists())
+        .unwrap_or(false);
+
+    if !mcp_available {
+        return;
+    }
+
+    // Check if MCP config already exists for this AI tool
+    let config_exists = match ai_tool {
+        "claude" => project_dir.join(".mcp.json").exists(),
+        "cursor" => project_dir.join(".cursor").join("mcp.json").exists(),
+        "vscode" => project_dir.join(".vscode").join("mcp.json").exists(),
+        "windsurf" => dirs::home_dir()
+            .map(|h| h.join(".codeium").join("windsurf").join("mcp_config.json").exists())
+            .unwrap_or(false),
+        _ => project_dir.join(".mcp.json").exists(),
+    };
+
+    if config_exists {
+        return;
+    }
+
+    // Create MCP config
+    let _ = crate::commands::context::configure_mcp(project_dir, ai_tool);
 }
 
 /// Kill orphaned rojo processes from a previous session that may still hold the port.

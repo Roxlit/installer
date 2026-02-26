@@ -68,7 +68,7 @@ fn write_context_packs(project_root: &Path) -> Result<()> {
 }
 
 /// Writes MCP server configuration for the selected AI tool.
-fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
+pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
     let mcp_bin_name = if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" };
     let mcp_binary = dirs::home_dir()
         .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name))
@@ -76,15 +76,16 @@ fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
 
     let mcp_path_str = mcp_binary.to_string_lossy().to_string();
 
+    // Claude Code uses .mcp.json at project root for MCP config.
+    // Cursor, VS Code, and Windsurf use tool-specific directories.
     match ai_tool {
         "claude" => {
-            let dir = project_root.join(".claude");
-            fs::create_dir_all(&dir)?;
-            let config_path = dir.join("settings.json");
+            let config_path = project_root.join(".mcp.json");
             let config = format!(
                 r#"{{
   "mcpServers": {{
     "rbxsync": {{
+      "type": "stdio",
       "command": "{mcp_path_str}"
     }}
   }}
@@ -127,11 +128,15 @@ fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
             fs::write(config_path, config)?;
         }
         "windsurf" => {
-            let dir = project_root.join(".windsurf");
-            fs::create_dir_all(&dir)?;
-            let config_path = dir.join("mcp.json");
-            let config = format!(
-                r#"{{
+            // Windsurf uses a global config at ~/.codeium/windsurf/mcp_config.json
+            if let Some(home) = dirs::home_dir() {
+                let dir = home.join(".codeium").join("windsurf");
+                fs::create_dir_all(&dir)?;
+                let config_path = dir.join("mcp_config.json");
+                // Don't overwrite if it already exists (user may have other servers)
+                if !config_path.exists() {
+                    let config = format!(
+                        r#"{{
   "mcpServers": {{
     "rbxsync": {{
       "command": "{mcp_path_str}"
@@ -139,16 +144,19 @@ fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
   }}
 }}
 "#
-            );
-            fs::write(config_path, config)?;
+                    );
+                    fs::write(config_path, config)?;
+                }
+            }
         }
         _ => {
-            // Generic fallback
-            let config_path = project_root.join("mcp-config.json");
+            // Generic fallback — use .mcp.json (same as Claude Code)
+            let config_path = project_root.join(".mcp.json");
             let config = format!(
                 r#"{{
   "mcpServers": {{
     "rbxsync": {{
+      "type": "stdio",
       "command": "{mcp_path_str}"
     }}
   }}
