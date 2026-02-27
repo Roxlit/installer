@@ -114,25 +114,21 @@ pub async fn start_rojo(
             )))?;
     }
 
-    // Migrate legacy projects: move .luau files from src/ to scripts/
-    let scripts_dir = project_dir.join("scripts");
-    let legacy_src = project_dir.join("src");
-    if !scripts_dir.exists() && legacy_src.exists() {
-        // Check if src/ has any .luau files (legacy layout)
-        let has_luau = has_luau_files(&legacy_src);
-        if has_luau {
-            let _ = std::fs::create_dir_all(&scripts_dir);
-            move_luau_tree(&legacy_src, &scripts_dir);
-        }
+    // Migrate legacy projects: move files from scripts/ to src/
+    let src_dir = project_dir.join("src");
+    let legacy_scripts = project_dir.join("scripts");
+    if legacy_scripts.exists() && has_luau_files(&legacy_scripts) {
+        let _ = std::fs::create_dir_all(&src_dir);
+        move_luau_tree(&legacy_scripts, &src_dir);
     }
 
     let project_json = project_dir.join("default.project.json");
-    // Rewrite project.json if it still references src/ for scripts
+    // Rewrite project.json if it still references scripts/ (old layout)
     if project_json.exists() {
         if let Ok(content) = std::fs::read_to_string(&project_json) {
-            if content.contains("\"src/ServerScriptService\"")
-                || content.contains("\"src/StarterPlayer")
-                || content.contains("\"src/ReplicatedStorage\"")
+            if content.contains("\"scripts/ServerScriptService\"")
+                || content.contains("\"scripts/StarterPlayer")
+                || content.contains("\"scripts/ReplicatedStorage\"")
             {
                 let name = project_dir
                     .file_name()
@@ -168,21 +164,21 @@ pub async fn start_rojo(
         let _ = std::fs::write(&rbxsync_json, crate::templates::rbxsync_json(name));
     }
 
-    // Ensure .rbxsyncignore exists and includes scripts/
+    // Ensure .rbxsyncignore exists and includes src/
     let rbxsyncignore = project_dir.join(".rbxsyncignore");
     if rbxsyncignore.exists() {
         if let Ok(content) = std::fs::read_to_string(&rbxsyncignore) {
-            if !content.contains("scripts/") {
+            if !content.contains("src/") {
                 let _ = std::fs::write(
                     &rbxsyncignore,
-                    format!("{}scripts/\n", content),
+                    format!("{}src/\n", content),
                 );
             }
         }
     } else {
         let _ = std::fs::write(
             &rbxsyncignore,
-            ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nscripts/\n",
+            ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nsrc/\n",
         );
     }
 
@@ -198,17 +194,17 @@ pub async fn start_rojo(
     // Ensure Debug.luau exists (added in v0.7.0, older projects don't have it)
     ensure_debug_module(project_dir);
 
-    // Ensure project directories exist (user may have deleted scripts/)
+    // Ensure project directories exist (user may have deleted src/)
     for subdir in &[
-        "scripts/ServerScriptService",
-        "scripts/StarterPlayer/StarterPlayerScripts",
-        "scripts/StarterPlayer/StarterCharacterScripts",
-        "scripts/ReplicatedStorage",
-        "scripts/ReplicatedFirst",
-        "scripts/ServerStorage",
-        "scripts/Workspace",
-        "scripts/StarterGui",
-        "scripts/StarterPack",
+        "src/ServerScriptService",
+        "src/StarterPlayer/StarterPlayerScripts",
+        "src/StarterPlayer/StarterCharacterScripts",
+        "src/ReplicatedStorage",
+        "src/ReplicatedFirst",
+        "src/ServerStorage",
+        "src/Workspace",
+        "src/StarterGui",
+        "src/StarterPack",
     ] {
         let dir = project_dir.join(subdir);
         if !dir.exists() {
@@ -451,8 +447,8 @@ fn has_luau_files(dir: &std::path::Path) -> bool {
     false
 }
 
-/// Move .luau files from src/ to scripts/, preserving directory structure.
-/// Only moves .luau files — .rbxjson files stay in src/ for rbxsync.
+/// Move .luau and .model.json files from scripts/ to src/, preserving directory structure.
+/// Handles migration from the legacy layout where Rojo used scripts/ to avoid conflicting with rbxsync's src/.
 fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
     if let Ok(entries) = std::fs::read_dir(src) {
         for entry in entries.flatten() {
@@ -462,11 +458,15 @@ fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
                 let sub_dest = dest.join(&name);
                 let _ = std::fs::create_dir_all(&sub_dest);
                 move_luau_tree(&path, &sub_dest);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("luau") {
-                let dest_file = dest.join(&name);
-                // Move = copy + delete (works across filesystems)
-                if std::fs::copy(&path, &dest_file).is_ok() {
-                    let _ = std::fs::remove_file(&path);
+            } else {
+                let ext = path.extension().and_then(|e| e.to_str());
+                let is_model_json = path.to_str().map_or(false, |s| s.ends_with(".model.json"));
+                if ext == Some("luau") || is_model_json {
+                    let dest_file = dest.join(&name);
+                    // Move = copy + delete (works across filesystems)
+                    if std::fs::copy(&path, &dest_file).is_ok() {
+                        let _ = std::fs::remove_file(&path);
+                    }
                 }
             }
         }
@@ -675,7 +675,7 @@ fn ensure_mcp_config(project_dir: &std::path::Path, ai_tool: &str) {
 /// `require(game.ReplicatedStorage.Debug)`, so the file must exist.
 fn ensure_debug_module(project_dir: &std::path::Path) {
     let debug_path = project_dir
-        .join("scripts")
+        .join("src")
         .join("ReplicatedStorage")
         .join("Debug.luau");
     if !debug_path.exists() {

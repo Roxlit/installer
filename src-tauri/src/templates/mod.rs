@@ -11,7 +11,7 @@ pub fn project_json(project_name: &str) -> String {
     "ServerScriptService": {{
       "$className": "ServerScriptService",
       "$ignoreUnknownInstances": true,
-      "$path": "scripts/ServerScriptService"
+      "$path": "src/ServerScriptService"
     }},
     "StarterPlayer": {{
       "$className": "StarterPlayer",
@@ -19,43 +19,43 @@ pub fn project_json(project_name: &str) -> String {
       "StarterPlayerScripts": {{
         "$className": "StarterPlayerScripts",
         "$ignoreUnknownInstances": true,
-        "$path": "scripts/StarterPlayer/StarterPlayerScripts"
+        "$path": "src/StarterPlayer/StarterPlayerScripts"
       }},
       "StarterCharacterScripts": {{
         "$className": "StarterCharacterScripts",
         "$ignoreUnknownInstances": true,
-        "$path": "scripts/StarterPlayer/StarterCharacterScripts"
+        "$path": "src/StarterPlayer/StarterCharacterScripts"
       }}
     }},
     "ReplicatedStorage": {{
       "$className": "ReplicatedStorage",
       "$ignoreUnknownInstances": true,
-      "$path": "scripts/ReplicatedStorage"
+      "$path": "src/ReplicatedStorage"
     }},
     "ReplicatedFirst": {{
       "$className": "ReplicatedFirst",
       "$ignoreUnknownInstances": true,
-      "$path": "scripts/ReplicatedFirst"
+      "$path": "src/ReplicatedFirst"
     }},
     "ServerStorage": {{
       "$className": "ServerStorage",
       "$ignoreUnknownInstances": true,
-      "$path": "scripts/ServerStorage"
+      "$path": "src/ServerStorage"
     }},
     "Workspace": {{
       "$className": "Workspace",
       "$ignoreUnknownInstances": true,
-      "$path": "scripts/Workspace"
+      "$path": "src/Workspace"
     }},
     "StarterGui": {{
       "$className": "StarterGui",
       "$ignoreUnknownInstances": true,
-      "$path": "scripts/StarterGui"
+      "$path": "src/StarterGui"
     }},
     "StarterPack": {{
       "$className": "StarterPack",
       "$ignoreUnknownInstances": true,
-      "$path": "scripts/StarterPack"
+      "$path": "src/StarterPack"
     }}
   }}
 }}
@@ -141,13 +141,13 @@ return Debug
 }
 
 /// Returns the rbxsync.json configuration.
-/// Only excludes Roblox internals (CoreGui, CorePackages). RbxSync extracts instances
-/// (.rbxjson) from Studio for backup/exploration. Scripts (.luau) are managed by Rojo.
+/// RbxSync is used ONLY for MCP tools (run_code, run_test, insert_model).
+/// Instance sync is handled entirely by Rojo via .model.json files.
 pub fn rbxsync_json(project_name: &str) -> String {
     format!(
         r#"{{
   "name": "{project_name}",
-  "tree": "./src",
+  "tree": "./.rbxsync",
   "config": {{
     "excludeServices": [
       "CoreGui",
@@ -163,7 +163,7 @@ pub fn rbxsync_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.7.2";
+pub const CONTEXT_VERSION: &str = "0.8.0";
 
 /// Debug plugin version — bump to force re-installation when plugin code changes.
 pub const DEBUG_PLUGIN_VERSION: &str = "1.0.1";
@@ -351,285 +351,200 @@ pub const USER_NOTES_MARKER: &str = "## Your Notes";
 /// Returns the AI context file content with Roblox/Luau development instructions.
 /// This is the same content regardless of AI tool — only the filename changes.
 pub fn ai_context(project_name: &str, mcp_available: bool) -> String {
-    let rbxsync_section = if mcp_available {
+    let mcp_section = if mcp_available {
         r#"
-## RbxSync (Instance Snapshots + MCP)
+## MCP Tools (Testing & Marketplace Only)
 
-This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync provides instance snapshots and an **MCP server** for real-time interaction with Studio.
+MCP tools connect to Roblox Studio via the RbxSync plugin. Use them ONLY for:
 
-**IMPORTANT: You have DIRECT ACCESS to Roblox Studio via MCP tools.** You can read instances, create objects, set properties, execute Luau code, and run tests — all in real-time. Do NOT tell the user "I can't see your screen" or ask them to check things manually when you can use MCP tools to check yourself.
+- `run_code` — Execute Luau in Studio. For quick checks, verifying state, debugging. NOT for building instances (use .model.json instead).
+- `run_test` — Start a playtest, capture all console output, stop. Your #1 debugging tool.
+- `insert_model` — Insert a marketplace asset by ID into Studio.
 
-### How it works
+**Do NOT use MCP to create instances.** Write .model.json files instead — Rojo syncs them automatically.
 
-- **Rojo**: Syncs `.luau` scripts in ALL services (real-time, filesystem → Studio). One-directional.
-- **RbxSync**: Periodically extracts instances from Studio to local `.rbxjson` files (~30s). These are read-only snapshots for browsing and backup.
-- **MCP**: Direct real-time connection to Studio. **This is the source of truth for instances** — always use MCP to read and write instances.
+### Debugging with MCP
 
-### IMPORTANT: Activating the RbxSync Plugin
+**The loop:** edit files → `run_test` → read output → fix → repeat
 
-The RbxSync plugin must be activated **once per Studio session**:
-1. If this is the first time after installation, **restart Roblox Studio** so it loads the new plugin
-2. Go to the Plugins tab
-3. Find the RbxSync plugin and click "Sync" or "Connect"
-4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically in the project directory)
-
-If the user reports that the RbxSync plugin doesn't appear, they need to restart Studio. Plugins are only loaded when Studio starts.
-If the user reports that instance sync isn't working, remind them to activate the plugin in Studio. This is required every time Studio is opened.
-
-### MCP Tools — Primary Way to Work with Instances
-
-**Writing:**
-- **Scripts** → always edit local `.luau` files in `scripts/` (Rojo syncs to Studio in real-time)
-- **Instances** → use MCP tools (`create_instance`, `set_property`, `delete_instance`, etc.) — changes apply instantly in Studio
-- **Never edit local `.rbxjson` files directly** — they are auto-generated cache and will be overwritten by the next Studio extract
-- **Never create files in `src/`** — rbxsync overwrites it periodically
-
-**Reading:**
-- **Specific instance** → use `run_code` with Luau to check if it exists and read properties (always fresh, real-time from Studio). NOTE: `get_instance`, `explore_hierarchy`, `find_instances`, `read_properties` are broken — use `run_code` instead.
-- **Explore project structure** → read local `.rbxjson` files with Glob + Read (good for browsing, but may be up to 30s stale), OR use `run_code` with a tree-printing Luau snippet
-- **Before any write** → use `run_code` to confirm current state
-
-**Debugging & testing — MANDATORY WORKFLOW:**
-
-Every time you create or modify something, you MUST verify it works. Never say "done" or "it should work" without verifying.
-
-**The debugging loop:** create/edit → verify with `run_code` → playtest with `run_test` → read errors → fix → repeat
-
-Tools:
-- `run_code` — **your primary tool.** Execute arbitrary Luau in Studio to create instances, check properties, verify state, explore hierarchy — everything. Use this for all instance inspection and creation.
-- `run_test` — starts a playtest session in Studio, captures ALL console output (prints, warnings, errors), stops the session, and returns the full output. This is your #1 debugging tool.
-- `insert_model` — insert a Roblox marketplace model by asset ID into Studio.
-
-**CRITICAL — `run_code` rules:**
-- Each `run_code` call is a **separate execution context**. Local variables do NOT persist between calls.
-- To reference instances created in a previous call, use full paths: `workspace:FindFirstChild("Car")`, NOT a local variable from before.
-- For multi-instance creation (models, vehicles, GUIs with 10+ parts), split into logical groups of ~5-10 instances per `run_code` call. Each call should parent its instances to the model so the next call can find them by path.
-- Keep each `run_code` call under ~200 lines. Calls that are too large (>10k tokens) will fail. If you need more, split into multiple calls with each one creating a logical group (e.g., "chassis + body", "wheels", "lights").
-- **NEVER call `:Destroy()` on existing instances to "rebuild from scratch"** unless the user explicitly asks. If something looks wrong, inspect it first — don't delete and redo. Destroying work wastes time and tokens.
-
-**MCP tools — what works and what doesn't:**
-
-RELIABLE (use these):
-- `run_code` → **RELIABLE**. Executes Luau in edit mode. Good for creating instances, checking properties, quick validations. **This is your Swiss army knife — use it for everything.**
-- `run_test` with `duration` → **RELIABLE**. Starts a playtest, waits the specified seconds, captures all output, stops. Use this for automated checks (script errors, print output, initialization).
-- `insert_model` → **RELIABLE**. Inserts a Roblox marketplace model by asset ID.
-
-BROKEN (do NOT use — these have known bugs and return empty/garbage data):
-- `explore_hierarchy` → **BROKEN**. Returns `? [?]` instead of actual data. Use `run_code` with Luau to explore the hierarchy instead (see workaround below).
-- `find_instances` → **BROKEN**. Returns "No results" even when instances exist. Use `run_code` instead.
-- `read_properties` → **BROKEN**. Returns empty. Use `run_code` instead.
-- `get_instance` → **MAY NOT WORK**. If it returns empty or `? [?]`, use `run_code` instead.
-- `run_test` with `background: true` → **UNRELIABLE**. Background playtests often drop after 1-2 seconds. Avoid.
-- `bot_observe`, `bot_move`, `bot_action`, `bot_wait_for` → **DO NOT USE**. Bot tools are unstable and frequently fail with timeouts or connection errors.
-
-**Workaround: Use `run_code` instead of broken exploration tools:**
-```lua
--- Instead of explore_hierarchy("Workspace", depth=2):
-local function printTree(inst, depth, maxDepth)
-    if depth > maxDepth then return end
-    local indent = string.rep("  ", depth)
-    print(indent .. inst.Name .. " [" .. inst.ClassName .. "] (" .. #inst:GetChildren() .. " children)")
-    for _, child in inst:GetChildren() do
-        printTree(child, depth + 1, maxDepth)
-    end
-end
-printTree(workspace, 0, 2)
-
--- Instead of find_instances(className="VehicleSeat"):
-for _, inst in workspace:GetDescendants() do
-    if inst:IsA("VehicleSeat") then
-        print(inst:GetFullName())
-    end
-end
-
--- Instead of read_properties("Workspace/Car/VehicleSeat"):
-local seat = workspace:FindFirstChild("Car") and workspace.Car:FindFirstChild("VehicleSeat")
-if seat then
-    print("MaxSpeed:", seat.MaxSpeed, "Torque:", seat.Torque, "Throttle:", seat.ThrottleFloat)
-end
-```
-**Always use `run_code` for reading instances and properties. The dedicated browse tools are broken.**
-
-**For interactive testing** (player sitting in a vehicle, pressing keys, testing GUI interactions): ask the user to playtest manually (F5) and then read `.roxlit/logs/latest.log` for the Debug.print output. You cannot simulate player input via MCP. **This only works if you added Debug.print() calls to the scripts.** If there are no prints, there are no logs. Always add logging FIRST.
-
-**Common debugging patterns:**
-- "car doesn't move" → read logs for `[VehicleCtrl]` prints. No prints? You forgot Debug.print(). Add them first, then test again
-- "sound doesn't play" → `run_code` to check `game.Workspace.Model.Sound.SoundId` and verify it's not empty
-- "script doesn't run" → `run_code` to verify the script exists (`print(workspace:FindFirstChild("MyScript", true))`) then `run_test` to see errors. Check for `[ScriptName] Initialized` in logs
-- "GUI doesn't show" → `run_code` to check `print(game.StarterGui:FindFirstChild("MyGui"))`, then `run_test` for errors
-- "I have no idea what's happening" → You probably forgot to add Debug.print(). Add them and test again
-
-**MANDATORY: Never tell the user "I can't see your screen" when you have MCP tools. Check yourself.**
-
-### Local `.rbxjson` Files — Cache, Not Source of Truth
-
-RbxSync periodically extracts instances from Studio to local `.rbxjson` files. These files are useful for:
-- **Exploring** the project structure (Glob + Read)
-- **Git history** — track what changed over time
-- **Backups** — recover from mistakes
-
-**WARNING**: Local `.rbxjson` files may be up to 30s stale. Studio is the source of truth. If the user edits something in Studio, the local files won't reflect it immediately. Always use MCP `get_instance` when you need current data.
-
-### RbxSync File Structure
-
-Instances are cached under `src/` alongside scripts, mirroring the Roblox DataModel hierarchy:
-
-```
-src/
-  Workspace/
-    SpawnLocation/          ← Folder name = instance name
-      _meta.rbxjson         ← Class + properties of SpawnLocation
-      Decal.rbxjson         ← Child instance (simple, no children of its own)
-    MyModel/
-      _meta.rbxjson         ← Class + properties of MyModel
-      Part1.rbxjson         ← Child Part
-      Part2/                ← Child with its own children → becomes a folder
-        _meta.rbxjson
-        SurfaceGui.rbxjson
-  Lighting/
-    _meta.rbxjson           ← Lighting service properties
-    Atmosphere.rbxjson      ← Post-processing effect
-```
-
-Rules:
-- **Instances with children** → folder with `_meta.rbxjson` inside (contains class + properties)
-- **Leaf instances** (no children) → single `.rbxjson` file
-- **`_meta.rbxjson`** contains `""ClassName""` and `""Properties""`
-- To find an instance, **search by folder/file name** in `src/`
-- These files are **read-only cache** — use MCP to modify instances
-- Rojo ignores `.rbxjson` files (`globIgnorePaths`), so both file types coexist in `src/` without conflicts
-
-### Sync Workflow
-
-**Editing scripts (.luau)**: Edit local files in `scripts/`. Rojo syncs to Studio in real-time.
-
-**Editing instances**: Use MCP tools. Changes apply instantly in Studio. Local `.rbxjson` files in `src/` update on the next auto-extract (~30s).
-
-**Reading instances**: Use MCP `get_instance` for real-time data. Use local `.rbxjson` files only for exploration/browsing.
-
-**File ownership**:
-- Rojo owns `.luau` files in `scripts/` — always edit locally
-- MCP owns instance editing — always use MCP tools, never edit `.rbxjson` directly
-- `src/` is rbxsync's domain — never create or edit files there manually
-
-### Backups
-
-Roxlit automatically backs up `.rbxjson` files before each Studio extract:
-- Location: `.roxlit/backups/<timestamp>/`
-- Each backup preserves the full `src/` directory structure
-- Maximum 20 backups retained (oldest are deleted)
-- Each backup has a `manifest.json` listing the files
-
-If the user reports lost changes to instances, check `.roxlit/backups/` for recent backups. You can diff the backup files against current files to find what changed.
+- `run_code` to verify an instance exists: `print(workspace:FindFirstChild("Door"))`
+- `run_test` with duration to capture script errors and print output
+- Each `run_code` call is a separate context — local variables don't persist between calls
 
 "#
     } else {
         r#"
-## RbxSync (Instance Snapshots)
+## Debugging Without MCP
 
-This project uses RbxSync alongside Rojo. While Rojo syncs Luau scripts, RbxSync periodically extracts instance snapshots from Studio to local `.rbxjson` files.
+Roxlit captures Studio output automatically:
 
-### How it works
-
-- **Rojo**: Syncs `.luau` scripts (real-time, filesystem → Studio). One-directional.
-- **RbxSync**: Periodically extracts instances from Studio to local `.rbxjson` files (~30s). These are **read-only snapshots** for browsing and backup — NOT for editing.
-
-### IMPORTANT: Activating the RbxSync Plugin
-
-The RbxSync plugin must be activated **once per Studio session**:
-1. If this is the first time after installation, **restart Roblox Studio** so it loads the new plugin
-2. Go to the Plugins tab
-3. Find the RbxSync plugin and click "Sync" or "Connect"
-4. The plugin connects to `rbxsync serve` (which Roxlit starts automatically in the project directory)
-
-If the user reports that the RbxSync plugin doesn't appear, they need to restart Studio. Plugins are only loaded when Studio starts.
-
-### Working with Instances
-
-**Scripts** → always edit local `.luau` files in `scripts/` (Rojo syncs to Studio in real-time)
-
-**Instances** (Parts, GUIs, Models, etc.) → edit directly in Roblox Studio. You CANNOT create or modify instances by editing local files — local `.rbxjson` files are auto-generated snapshots that get overwritten every ~30s.
-
-**NEVER edit `.rbxjson` files directly** — they will be overwritten by the next Studio extract.
-**NEVER create files in `src/`** — rbxsync manages this directory and overwrites it periodically.
-
-### Reading Instance Data
-
-Local `.rbxjson` files are useful for **reading** the project structure:
-- Use Glob + Read to explore what instances exist, their properties, and hierarchy
-- Files may be up to 30s stale — if freshness matters, ask the user to check in Studio
-
-### RbxSync File Structure
-
-Instance snapshots are stored under `src/`, mirroring the Roblox DataModel hierarchy:
-
-```
-src/
-  Workspace/
-    SpawnLocation/          ← Folder name = instance name
-      _meta.rbxjson         ← Class + properties of SpawnLocation
-      Decal.rbxjson         ← Child instance (simple, no children of its own)
-    MyModel/
-      _meta.rbxjson         ← Class + properties of MyModel
-      Part1.rbxjson         ← Child Part
-  Lighting/
-    _meta.rbxjson           ← Lighting service properties
-    Atmosphere.rbxjson      ← Post-processing effect
-```
-
-Rules:
-- **Instances with children** → folder with `_meta.rbxjson` inside
-- **Leaf instances** (no children) → single `.rbxjson` file
-- **`_meta.rbxjson`** contains `""ClassName""` and `""Properties""`
-- To find an instance, **search by folder/file name** in `src/`
-- Rojo ignores `.rbxjson` files (`globIgnorePaths`), so both file types coexist without conflicts
-
-### Backups
-
-Roxlit automatically backs up `.rbxjson` files before each Studio extract:
-- Location: `.roxlit/backups/<timestamp>/`
-- Each backup preserves the full `src/` directory structure
-- Maximum 20 backups retained (oldest are deleted)
-- Each backup has a `manifest.json` listing the files
-
-If the user reports lost changes to instances, check `.roxlit/backups/` for recent backups. You can diff the backup files against current files to find what changed.
-
-### Debugging Without MCP
-
-Without MCP tools, you cannot directly run code or tests in Studio. But Roxlit captures Studio output automatically:
-
-1. **FIRST: Make sure your scripts have Debug.print() calls** — if you didn't add them, the logs will be empty and useless. Go add them NOW before asking the user to test
-2. **Ask them to playtest**: Press F5 (Play) in Studio to run the game
-3. **Read the logs**: `.roxlit/logs/latest.log` captures Studio console output (prints, warnings, errors) in real-time — check `[studio-err]` for errors first
-4. **If logs are empty**: Either the RoxlitDebug plugin isn't loaded (ask user to restart Studio), OR you forgot to add Debug.print() calls (go add them)
-5. **Fallback**: Ask the user to check the Output panel in Studio, or click "Copy All" in the Roxlit launcher terminal
-6. **Analyze the error**: Once you have the error text, diagnose and fix it
-
-Common patterns:
-- `"X is not a valid member of Y"` → wrong property name or instance path
-- `"attempt to index nil"` → a `FindFirstChild` or variable is nil, check the instance exists
-- Script not running at all → verify the file is in the right `scripts/` subfolder and has the correct `.server.luau` or `.client.luau` extension
+1. **Make sure your scripts have Debug.print() calls** — without them, logs are empty
+2. Ask the user to playtest (F5 in Studio)
+3. Read `.roxlit/logs/latest.log` — search `[studio-err]` for errors first
+4. If logs are empty: RoxlitDebug plugin not loaded (restart Studio) or no Debug.print() calls
+5. Fallback: ask the user to check Output panel in Studio
 
 "#
     };
+
+    let instance_section = r#"
+## Creating Instances with .model.json (Rojo)
+
+Rojo syncs **both scripts AND instances**. For instances (Parts, Models, GUIs, Folders), create `.model.json` files in `src/`. Rojo syncs them to Studio automatically, just like .luau files.
+
+### Basic Format
+
+`src/Workspace/SpawnPlatform.model.json`:
+```json
+{
+  "ClassName": "Part",
+  "Properties": {
+    "Size": [20, 1, 20],
+    "Position": [0, 0.5, 0],
+    "Anchored": true,
+    "Material": "SmoothPlastic",
+    "Color3": [0.2, 0.8, 0.4]
+  }
+}
+```
+
+The filename (minus `.model.json`) becomes the instance Name. Rojo places it under the parent service mapped in the project file.
+
+### Models with Children
+
+`src/Workspace/Door.model.json`:
+```json
+{
+  "ClassName": "Model",
+  "Children": [
+    {
+      "Name": "DoorPart",
+      "ClassName": "Part",
+      "Properties": {
+        "Size": [4, 6, 0.5],
+        "Position": [0, 3, 0],
+        "Anchored": true,
+        "BrickColor": {"BrickColor": 194}
+      }
+    },
+    {
+      "Name": "Frame",
+      "ClassName": "Part",
+      "Properties": {
+        "Size": [1, 7, 1],
+        "Position": [-2.5, 3.5, 0],
+        "Anchored": true,
+        "Color3": [0.3, 0.3, 0.3]
+      }
+    },
+    {
+      "Name": "OpenPrompt",
+      "ClassName": "ProximityPrompt",
+      "Properties": {
+        "ActionText": "Open",
+        "HoldDuration": 0,
+        "MaxActivationDistance": 10
+      }
+    }
+  ]
+}
+```
+
+### GUI Example
+
+`src/StarterGui/MainMenu.model.json`:
+```json
+{
+  "ClassName": "ScreenGui",
+  "Properties": {
+    "ResetOnSpawn": false,
+    "ZIndexBehavior": "Sibling"
+  },
+  "Children": [
+    {
+      "Name": "TitleLabel",
+      "ClassName": "TextLabel",
+      "Properties": {
+        "Size": {"UDim2": [[0.5, 0], [0.1, 0]]},
+        "Position": {"UDim2": [[0.25, 0], [0.1, 0]]},
+        "Text": "My Game",
+        "TextScaled": true,
+        "BackgroundTransparency": 1,
+        "TextColor3": [1, 1, 1],
+        "FontFace": {"Font": {"family": "rbxasset://fonts/families/GothamSSm.json", "weight": "Bold", "style": "Normal"}}
+      }
+    },
+    {
+      "Name": "PlayButton",
+      "ClassName": "TextButton",
+      "Properties": {
+        "Size": {"UDim2": [[0.2, 0], [0.06, 0]]},
+        "Position": {"UDim2": [[0.4, 0], [0.5, 0]]},
+        "Text": "Play",
+        "TextScaled": true,
+        "BackgroundColor3": [0.2, 0.8, 0.4]
+      }
+    }
+  ]
+}
+```
+
+### Property Type Reference
+
+**Implicit (Rojo infers the type):**
+- Bool: `true` / `false`
+- String: `"Hello"`
+- Number: `15.0`
+- Vector3: `[1.0, 2.0, 3.0]`
+- Vector2: `[-50.0, 50.0]`
+- Color3: `[0.5, 0.5, 0.5]` (floats 0-1, NOT 0-255)
+- Content (asset IDs): `"rbxassetid://12345"`
+- Enum (by name): `"SmoothPlastic"` for Material, `"Sibling"` for ZIndexBehavior
+- Tags: `["tag1", "tag2"]`
+
+**Explicit (you specify the type):**
+- BrickColor: `{"BrickColor": 194}`
+- Color3uint8: `{"Color3uint8": [163, 162, 165]}` (integers 0-255)
+- Enum (by number): `{"Enum": 512}`
+- CFrame: `{"CFrame": {"position": [0, 10, 0], "orientation": [[1,0,0],[0,1,0],[0,0,1]]}}`
+- UDim: `{"UDim": [1.0, 32]}` (scale, offset)
+- UDim2: `{"UDim2": [[-1.0, 100], [1.0, -100]]}` (X and Y UDim pairs)
+- NumberRange: `{"NumberRange": [-36.0, 94.0]}`
+- NumberSequence: `{"NumberSequence": {"keypoints": [{"time": 0.0, "value": 5.0, "envelope": 0.0}]}}`
+- ColorSequence: `{"ColorSequence": {"keypoints": [{"time": 0.0, "color": [1, 1, 0.5]}]}}`
+- Rect: `{"Rect": [[0.0, 5.0], [10.0, 15.0]]}`
+- PhysicalProperties: `{"PhysicalProperties": "Default"}` or `{"PhysicalProperties": {"density": 0.5, "friction": 1.0, "elasticity": 0.0, "frictionWeight": 50.0, "elasticityWeight": 25.0}}`
+- Font: `{"Font": {"family": "rbxasset://fonts/families/GothamSSm.json", "weight": "Bold", "style": "Normal"}}`
+
+**Not supported by Rojo:** Terrain data, CSG unions, MeshPart geometry. For these, use Studio directly or `insert_model` via MCP.
+
+### Rules
+
+- **Scripts are ALWAYS .luau files**, never inside .model.json
+- A script that controls a Model goes next to the .model.json as a .luau file, both inside the same `src/` subfolder
+- Rojo syncs .model.json files in real-time just like .luau files — save the file and it appears in Studio
+- For complex models with many parts, use one .model.json with nested Children — not separate files per part
+- To delete an instance from Studio, delete the .model.json file
+- .model.json files are versionable in git and diffable — this is a huge advantage over MCP-based creation
+
+"#;
 
     format!(
         r#"{VERSION_MARKER} {CONTEXT_VERSION} -->
 # {project_name}
 
-Roblox game project using Rojo for file syncing. Write Luau code in `scripts/` and Rojo syncs it to Roblox Studio in real time.
+Roblox game project using Rojo for file syncing. Write Luau code in `src/` and Rojo syncs it to Roblox Studio in real time.
 
 ## Tech Stack
 
 - **Language**: Luau (Roblox's typed Lua dialect)
-- **Sync tool**: Rojo (filesystem <-> Roblox DataModel)
-- **Instance snapshots**: RbxSync (periodic Studio → local snapshots for backup/exploration)
+- **Sync tool**: Rojo (filesystem <-> Roblox DataModel, scripts AND instances)
 - **Type checking**: Strict mode (`--!strict`)
 
 ## Project Structure
 
 ```
-scripts/                                ← Luau scripts (synced by Rojo to Studio)
+src/                                ← All game code and instances (synced by Rojo to Studio)
   ServerScriptService/                  → Server scripts
   StarterPlayer/
     StarterPlayerScripts/               → Client scripts (player join)
@@ -637,18 +552,14 @@ scripts/                                ← Luau scripts (synced by Rojo to Stud
   ReplicatedStorage/                    → Shared modules (server + client)
   ReplicatedFirst/                      → Early client loading scripts
   ServerStorage/                        → Server-only modules and assets
-  Workspace/                            → 3D world + scripts in Parts/Models
-  StarterGui/                           → GUI templates + LocalScripts
+  Workspace/                            → 3D world: Parts (.model.json), scripts (.luau)
+  StarterGui/                           → GUI (.model.json) + LocalScripts (.luau)
   StarterPack/                          → Starter tools + scripts
-src/                                    ← Instance cache (.rbxjson, managed by RbxSync)
-  Workspace/
-  Lighting/
-  ...
 ```
 
-**Creating scripts**: Create `.luau` files in `scripts/` — Rojo syncs them to Studio in real-time. NEVER create a `.rbxjson` file for a script — scripts are always `.luau`. NEVER create files in `src/` — rbxsync overwrites it periodically.
+**Scripts**: Create `.luau` files in `src/` — Rojo syncs them to Studio in real-time.
 
-**Instances** (Parts, GUIs, Models, etc.): Edit in Roblox Studio directly. Local `.rbxjson` files in `src/` are **read-only snapshots** from periodic Studio extracts (~30s) — useful for browsing and backup but NOT for editing. See the RbxSync section below.
+**Instances** (Parts, Models, GUIs, Folders): Create `.model.json` files in `src/` — Rojo syncs them too. See the "Creating Instances with .model.json" section below.
 
 ## File Naming Conventions
 
@@ -670,22 +581,19 @@ src/                                    ← Instance cache (.rbxjson, managed by
 
 When creating instances (Parts, Models, GUIs), follow these rules to keep the project clean from the start:
 
-- **Group related parts in a Model**: A door with its frame and wall = one Model, not 3 loose Parts in Workspace
+- **Group related parts in a Model**: A door with its frame and wall = one .model.json, not 3 loose Parts
 - **Set PrimaryPart on every Model**: Required for `Model:PivotTo()` to work
-- **Scripts that control a specific object go INSIDE that object's Model**: A DoorController script belongs inside the Door Model, not loose in Workspace
-- **Game-wide systems go in `scripts/ServerScriptService/`**: Things like a round manager, data save system, or admin commands
+- **Scripts that control a specific object go next to that object's .model.json**: DoorController.server.luau sits next to Door.model.json in the same folder
+- **Game-wide systems go in `src/ServerScriptService/`**: Things like a round manager, data save system, or admin commands
 - **Name everything descriptively**: `Door`, `DoorPart`, `Frame`, `Wall` — not `Part`, `Part2`, `Model`
 - **Never leave Parts or Scripts loose in Workspace root**: Always organize under a Model or Folder
 
 Example — a door with proximity interaction:
 ```
-Workspace/
-  Door (Model, PrimaryPart = DoorPart)
-    ├── DoorPart (Part) ← the part that rotates
-    │   └── ProximityPrompt ← built-in Roblox class for "Press E" interactions
-    ├── Frame (Part)
-    ├── Wall (Part)
-    └── DoorController (Script) ← controls this specific door
+src/Workspace/
+  Door.model.json              ← Model with DoorPart, Frame, Wall, ProximityPrompt
+  Door/
+    DoorController.server.luau ← Script that controls this specific door
 ```
 
 ## Key Rules
@@ -712,9 +620,9 @@ Workspace/
 **What YOU should build:** everything on top of the community base — appearance, game-specific features, custom UI, sounds, effects, unique mechanics. The community system is the foundation; the user's creative vision is what you add.
 
 **Always mention licensing**: tell the user to check the original source for license terms before using in a published game. Most community systems are free to use with credit, but the user should verify.
-{rbxsync_section}## Studio Output Logs
+{mcp_section}{instance_section}## Studio Output Logs
 
-Roxlit captures **all Roblox Studio output** (prints, warnings, errors) in real-time via a local plugin. When the user presses Play (F5), every `print()`, `warn()`, and `error()` from their scripts appears in `.roxlit/logs/latest.log` alongside Rojo and RbxSync logs.
+Roxlit captures **all Roblox Studio output** (prints, warnings, errors) in real-time via a local plugin. When the user presses Play (F5), every `print()`, `warn()`, and `error()` from their scripts appears in `.roxlit/logs/latest.log` alongside Rojo logs.
 
 ### Log Prefixes
 
@@ -722,7 +630,6 @@ Roxlit captures **all Roblox Studio output** (prints, warnings, errors) in real-
 - `[studio-warn]` — warn() output
 - `[studio-err]` — runtime errors, script errors
 - `[rojo]` / `[rojo-err]` — Rojo sync output
-- `[rbxsync]` / `[rbxsync-err]` — RbxSync output
 
 ### *** MANDATORY: Debug.print() in EVERY Script — NO EXCEPTIONS ***
 
@@ -798,9 +705,9 @@ Read `.roxlit/context/index.md` for an overview of all available packs.
 
 ## Roxlit Launcher
 
-This project was set up with Roxlit. The Roxlit launcher manages Rojo and RbxSync processes automatically.
+This project was set up with Roxlit. The Roxlit launcher manages Rojo automatically.
 
-- **Session logs on disk**: Roxlit captures ALL output to `.roxlit/logs/latest.log` — Rojo, RbxSync, AND Roblox Studio console (prints, warnings, errors). You can read this file to diagnose issues without asking the user to copy-paste. Previous sessions are saved as `.roxlit/logs/session-<timestamp>.log` (up to 10 retained).
+- **Session logs on disk**: Roxlit captures ALL output to `.roxlit/logs/latest.log` — Rojo AND Roblox Studio console (prints, warnings, errors). You can read this file to diagnose issues without asking the user to copy-paste. Previous sessions are saved as `.roxlit/logs/session-<timestamp>.log` (up to 10 retained).
 - **Copy logs from UI**: The user can also click "Copy All" in the Roxlit launcher terminal to copy all logs and paste them here.
 - **Do NOT remove or modify the Roxlit-generated sections above.** They are auto-updated by Roxlit when new versions are available.
 
