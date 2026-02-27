@@ -15,7 +15,7 @@ import { LogTerminal } from "./LogTerminal";
 import { UpdateBanner } from "./UpdateBanner";
 import { SettingsPopover } from "./SettingsPopover";
 import { TOOL_OPTIONS } from "@/lib/types";
-import type { RojoStatus, RbxSyncStatus, AutoSyncStatus, UpdateInfo } from "@/lib/types";
+import type { RojoStatus, UpdateInfo } from "@/lib/types";
 
 async function openExternal(url: string) {
   try {
@@ -35,8 +35,6 @@ interface LauncherProps {
   aiTool: string;
   rojoStatus: RojoStatus;
   rojoPort: number | null;
-  rbxsyncStatus: RbxSyncStatus;
-  autoSyncStatus: AutoSyncStatus;
   logs: string[];
   error: string | null;
   update: UpdateInfo | null;
@@ -49,13 +47,12 @@ interface LauncherProps {
   onUpdateDelayChange: (days: number) => void;
 }
 
-function StatusDot({ status }: { status: RojoStatus | RbxSyncStatus }) {
+function StatusDot({ status }: { status: RojoStatus }) {
   const colors: Record<string, string> = {
     stopped: "bg-zinc-500",
     starting: "bg-yellow-400 animate-pulse",
     running: "bg-emerald-400",
     error: "bg-red-400",
-    unavailable: "bg-zinc-700",
   };
   return <div className={`h-2 w-2 rounded-full ${colors[status] ?? "bg-zinc-500"}`} />;
 }
@@ -94,55 +91,12 @@ function RojoStatusText({
   }
 }
 
-function RbxSyncStatusText({ status }: { status: RbxSyncStatus }) {
-  switch (status) {
-    case "stopped":
-      return <span className="text-zinc-500">RbxSync stopped</span>;
-    case "starting":
-      return <span className="text-yellow-400">Starting RbxSync...</span>;
-    case "running":
-      return <span className="text-blue-400">RbxSync running</span>;
-    case "error":
-      return <span className="text-red-400">RbxSync error</span>;
-    case "unavailable":
-      return <span className="text-zinc-600">RbxSync not installed</span>;
-  }
-}
-
-function AutoSyncStatusDot({ status }: { status: AutoSyncStatus }) {
-  const colors: Record<string, string> = {
-    off: "bg-zinc-700",
-    idle: "bg-cyan-400",
-    syncing: "bg-cyan-400 animate-pulse",
-    extracting: "bg-cyan-400 animate-pulse",
-    error: "bg-red-400",
-  };
-  return <div className={`h-2 w-2 rounded-full ${colors[status] ?? "bg-zinc-500"}`} />;
-}
-
-function AutoSyncStatusText({ status }: { status: AutoSyncStatus }) {
-  switch (status) {
-    case "off":
-      return <span className="text-zinc-600">Auto-sync off</span>;
-    case "idle":
-      return <span className="text-cyan-400">Auto-sync active</span>;
-    case "syncing":
-      return <span className="text-cyan-400">Syncing to Studio...</span>;
-    case "extracting":
-      return <span className="text-cyan-400">Extracting from Studio...</span>;
-    case "error":
-      return <span className="text-red-400">Auto-sync error</span>;
-  }
-}
-
 export function Launcher({
   projectName,
   projectPath,
   aiTool,
   rojoStatus,
   rojoPort,
-  rbxsyncStatus,
-  autoSyncStatus,
   logs,
   error,
   update,
@@ -236,29 +190,17 @@ export function Launcher({
             ) : (
               <Square className="h-4 w-4" />
             )}
-            {rojoStatus === "starting" ? "Starting..." : "Stop All"}
+            {rojoStatus === "starting" ? "Starting..." : "Stop"}
           </button>
         )}
       </div>
 
-      {/* Status bar — dual indicators */}
+      {/* Status bar */}
       <div className="mt-3 flex items-center gap-4 text-xs">
         <div className="flex items-center gap-2">
           <StatusDot status={rojoStatus} />
           <RojoStatusText status={rojoStatus} port={rojoPort} />
         </div>
-        {rbxsyncStatus !== "unavailable" && (
-          <div className="flex items-center gap-2">
-            <StatusDot status={rbxsyncStatus} />
-            <RbxSyncStatusText status={rbxsyncStatus} />
-          </div>
-        )}
-        {rbxsyncStatus === "running" && autoSyncStatus !== "off" && (
-          <div className="flex items-center gap-2">
-            <AutoSyncStatusDot status={autoSyncStatus} />
-            <AutoSyncStatusText status={autoSyncStatus} />
-          </div>
-        )}
       </div>
 
       {/* Error display */}
