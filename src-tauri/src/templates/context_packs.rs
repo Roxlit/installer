@@ -609,31 +609,16 @@ The open-source chassis handles the hard part: making the car **drive** (physics
 
 The chassis is the foundation. The user's vision for THEIR car (semi-realistic, arcade, combat vehicle, etc.) is built on top.
 
-### Reference: How Roblox Vehicle Physics Work
+### Common Mistakes When Customizing Vehicles
 
-This section is for **understanding** existing chassis systems, not for building from scratch.
+Even with a community chassis, the AI gets these wrong constantly when adding/modifying parts:
 
-**VehicleSeat** is ONLY an input provider. It exposes `ThrottleFloat` (-1 to 1) and `SteerFloat` (-1 to 1) from WASD. Its `MaxSpeed`/`Torque`/`TurnSpeed` only auto-drive deprecated legacy surface hinges — NOT modern `HingeConstraint`. `AreHingesDetected = 0` is normal with modern constraints.
-
-**VehicleSeat orientation**: faces -Z by default (LookVector = -Z). Vehicle front must align with -Z.
-
-**Cabin/enclosures**: walls around the seat MUST have `CanCollide = false` so the player can reach the seat.
-
-**Wheel orientation**: Cylinders have axis along X by default. `Orientation = (0, 0, 0)` is correct for wheels (circular face points sideways).
-
-**HingeConstraint + Motor**: connects wheel to chassis, allows rotation. A script must set `AngularVelocity` and `MotorMaxTorque` — the VehicleSeat does NOT do this automatically.
-
-**AngularVelocity sign**: depends on attachment orientation. If car drives backwards when pressing W, negate the throttle value.
-
-**Torque/weight balance**: `MotorMaxTorque` too high + light chassis = wheelies. Heavy chassis + moderate torque = stable.
-
-**AlignOrientation**: prevents roll on turns and pitch on acceleration. Better than AngularVelocity for steering because it maintains pitch/roll stability.
-
-**Key rules if modifying a chassis:**
-- ALL parts Anchored = false
-- Chassis parts welded with WeldConstraint
-- Wheels NOT welded — only connected via HingeConstraint
-- Log everything with Debug.print() — throttle, angular velocities, torque values
+- **VehicleSeat faces -Z** (LookVector = -Z). The vehicle front MUST align with the seat's -Z. If the seat faces backwards, the controls are inverted.
+- **Cabin walls need CanCollide = false**. If the seat is inside an enclosed cabin, the player's character can't reach it. Set `CanCollide = false` on cabin parts (keep `Transparency = 0` so they're still visible).
+- **Wheel cylinders**: axis along X by default. `Orientation = (0, 0, 0)` = correct for wheels. `(0, -90, 0)` = wrong (faces forward like a headlight).
+- **Headlight cylinders**: `Orientation = (0, -90, 0)` = circular face points forward. Add a `SpotLight` or `PointLight` inside.
+- **ALL vehicle parts must be Anchored = false** — anchored parts block physics movement.
+- **Log everything with Debug.print()** when adding custom scripts to vehicles.
 
 ## CFrame: ALWAYS Use for Positioning Assemblies
 
