@@ -344,6 +344,14 @@ Tools:
 - If the code is too long for one call, have each call save its work to the DataModel (parent instances to workspace) and the next call finds them by path.
 - **NEVER call `:Destroy()` on existing instances to "rebuild from scratch"** unless the user explicitly asks. If something looks wrong, inspect it first — don't delete and redo. Destroying work wastes time and tokens.
 
+**Testing tools — what works and what doesn't:**
+- `run_test` with `duration` → **RELIABLE**. Starts a playtest, waits the specified seconds, captures all output, stops. Use this for automated checks (script errors, print output, initialization).
+- `run_code` → **RELIABLE**. Executes Luau in edit mode. Good for creating instances, checking properties, quick validations.
+- `run_test` with `background: true` → **UNRELIABLE**. Background playtests often drop after 1-2 seconds. Avoid using this.
+- `bot_observe`, `bot_move`, `bot_action`, `bot_wait_for` → **DO NOT USE**. Bot tools are unstable and frequently fail with timeouts or connection errors. Do not waste tokens retrying them.
+
+**For interactive testing** (player sitting in a vehicle, pressing keys, testing GUI interactions): ask the user to playtest manually (F5) and then read `.roxlit/logs/latest.log` for the Debug.print output. You cannot simulate player input via MCP.
+
 **Common debugging patterns:**
 - "car doesn't move" → `run_test`, read the output for errors (missing VehicleSeat? wrong property name?)
 - "sound doesn't play" → `run_code` to check `game.Workspace.Model.Sound.SoundId` and verify it's not empty
