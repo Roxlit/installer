@@ -77,13 +77,6 @@ impl SessionLogger {
         Some(Self { tx })
     }
 
-    /// Send a log line. Never blocks — just pushes to the channel.
-    pub fn log(&self, prefix: &str, line: &str) {
-        let ts = format_timestamp(unix_timestamp());
-        let formatted = format!("[{ts}] [{prefix}] {line}\n");
-        let _ = self.tx.send(formatted);
-    }
-
     /// Clone the sender so reader tasks can log without holding a lock.
     pub fn sender(&self) -> mpsc::UnboundedSender<String> {
         self.tx.clone()

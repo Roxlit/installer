@@ -1,9 +1,5 @@
 use serde::Serialize;
 use std::path::PathBuf;
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 use tokio::process::Command;
 
 /// Results from scanning the user's system for required tools.

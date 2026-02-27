@@ -4,9 +4,6 @@ use tauri::ipc::Channel;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 use crate::commands::logs::{send_log, LogServerState, LoggerState, SessionLogger};
 use crate::error::{InstallerError, Result};
 use crate::util::expand_tilde;
@@ -20,6 +17,7 @@ pub enum RojoEvent {
     #[serde(rename_all = "camelCase")]
     Started { port: u16 },
     Stopped { code: Option<i32> },
+    #[allow(dead_code)]
     Error { message: String },
 }
 

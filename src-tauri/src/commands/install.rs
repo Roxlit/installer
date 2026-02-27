@@ -7,9 +7,6 @@ use std::path::PathBuf;
 use tauri::ipc::Channel;
 use tokio::io::AsyncWriteExt;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 /// Progress events streamed from Rust to the React frontend via Channel.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "event", content = "data")]
