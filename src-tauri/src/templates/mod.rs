@@ -385,20 +385,20 @@ If the user reports that instance sync isn't working, remind them to activate th
 - **Never create files in `src/`** — rbxsync overwrites it periodically
 
 **Reading:**
-- **Specific instance** → use MCP `get_instance` (always fresh, real-time from Studio)
-- **Explore project structure** → read local `.rbxjson` files with Glob + Read (good for browsing, but may be up to 30s stale)
-- **Before any write** → always use MCP `get_instance` to confirm current state
+- **Specific instance** → use `run_code` with Luau to check if it exists and read properties (always fresh, real-time from Studio). NOTE: `get_instance`, `explore_hierarchy`, `find_instances`, `read_properties` are broken — use `run_code` instead.
+- **Explore project structure** → read local `.rbxjson` files with Glob + Read (good for browsing, but may be up to 30s stale), OR use `run_code` with a tree-printing Luau snippet
+- **Before any write** → use `run_code` to confirm current state
 
 **Debugging & testing — MANDATORY WORKFLOW:**
 
 Every time you create or modify something, you MUST verify it works. Never say "done" or "it should work" without verifying.
 
-**The debugging loop:** create/edit → verify with `get_instance` → playtest with `run_test` → read errors → fix → repeat
+**The debugging loop:** create/edit → verify with `run_code` → playtest with `run_test` → read errors → fix → repeat
 
 Tools:
-- `get_instance` — verify an instance or script exists in Studio's DataModel. Always use this after creating anything.
+- `run_code` — **your primary tool.** Execute arbitrary Luau in Studio to create instances, check properties, verify state, explore hierarchy — everything. Use this for all instance inspection and creation.
 - `run_test` — starts a playtest session in Studio, captures ALL console output (prints, warnings, errors), stops the session, and returns the full output. This is your #1 debugging tool.
-- `run_code` — execute arbitrary Luau in Studio to inspect runtime state (check property values, verify SoundIds, test expressions). Use this for quick checks without a full playtest.
+- `insert_model` — insert a Roblox marketplace model by asset ID into Studio.
 
 **CRITICAL — `run_code` rules:**
 - Each `run_code` call is a **separate execution context**. Local variables do NOT persist between calls.
@@ -407,19 +407,56 @@ Tools:
 - Keep each `run_code` call under ~200 lines. Calls that are too large (>10k tokens) will fail. If you need more, split into multiple calls with each one creating a logical group (e.g., "chassis + body", "wheels", "lights").
 - **NEVER call `:Destroy()` on existing instances to "rebuild from scratch"** unless the user explicitly asks. If something looks wrong, inspect it first — don't delete and redo. Destroying work wastes time and tokens.
 
-**Testing tools — what works and what doesn't:**
+**MCP tools — what works and what doesn't:**
+
+RELIABLE (use these):
+- `run_code` → **RELIABLE**. Executes Luau in edit mode. Good for creating instances, checking properties, quick validations. **This is your Swiss army knife — use it for everything.**
 - `run_test` with `duration` → **RELIABLE**. Starts a playtest, waits the specified seconds, captures all output, stops. Use this for automated checks (script errors, print output, initialization).
-- `run_code` → **RELIABLE**. Executes Luau in edit mode. Good for creating instances, checking properties, quick validations.
-- `run_test` with `background: true` → **UNRELIABLE**. Background playtests often drop after 1-2 seconds. Avoid using this.
-- `bot_observe`, `bot_move`, `bot_action`, `bot_wait_for` → **DO NOT USE**. Bot tools are unstable and frequently fail with timeouts or connection errors. Do not waste tokens retrying them.
+- `insert_model` → **RELIABLE**. Inserts a Roblox marketplace model by asset ID.
+
+BROKEN (do NOT use — these have known bugs and return empty/garbage data):
+- `explore_hierarchy` → **BROKEN**. Returns `? [?]` instead of actual data. Use `run_code` with Luau to explore the hierarchy instead (see workaround below).
+- `find_instances` → **BROKEN**. Returns "No results" even when instances exist. Use `run_code` instead.
+- `read_properties` → **BROKEN**. Returns empty. Use `run_code` instead.
+- `get_instance` → **MAY NOT WORK**. If it returns empty or `? [?]`, use `run_code` instead.
+- `run_test` with `background: true` → **UNRELIABLE**. Background playtests often drop after 1-2 seconds. Avoid.
+- `bot_observe`, `bot_move`, `bot_action`, `bot_wait_for` → **DO NOT USE**. Bot tools are unstable and frequently fail with timeouts or connection errors.
+
+**Workaround: Use `run_code` instead of broken exploration tools:**
+```lua
+-- Instead of explore_hierarchy("Workspace", depth=2):
+local function printTree(inst, depth, maxDepth)
+    if depth > maxDepth then return end
+    local indent = string.rep("  ", depth)
+    print(indent .. inst.Name .. " [" .. inst.ClassName .. "] (" .. #inst:GetChildren() .. " children)")
+    for _, child in inst:GetChildren() do
+        printTree(child, depth + 1, maxDepth)
+    end
+end
+printTree(workspace, 0, 2)
+
+-- Instead of find_instances(className="VehicleSeat"):
+for _, inst in workspace:GetDescendants() do
+    if inst:IsA("VehicleSeat") then
+        print(inst:GetFullName())
+    end
+end
+
+-- Instead of read_properties("Workspace/Car/VehicleSeat"):
+local seat = workspace:FindFirstChild("Car") and workspace.Car:FindFirstChild("VehicleSeat")
+if seat then
+    print("MaxSpeed:", seat.MaxSpeed, "Torque:", seat.Torque, "Throttle:", seat.ThrottleFloat)
+end
+```
+**Always use `run_code` for reading instances and properties. The dedicated browse tools are broken.**
 
 **For interactive testing** (player sitting in a vehicle, pressing keys, testing GUI interactions): ask the user to playtest manually (F5) and then read `.roxlit/logs/latest.log` for the Debug.print output. You cannot simulate player input via MCP. **This only works if you added Debug.print() calls to the scripts.** If there are no prints, there are no logs. Always add logging FIRST.
 
 **Common debugging patterns:**
 - "car doesn't move" → read logs for `[VehicleCtrl]` prints. No prints? You forgot Debug.print(). Add them first, then test again
 - "sound doesn't play" → `run_code` to check `game.Workspace.Model.Sound.SoundId` and verify it's not empty
-- "script doesn't run" → `get_instance` to verify the script exists in the right location, then `run_test` to see if there are errors. Check for `[ScriptName] Initialized` in logs
-- "GUI doesn't show" → `get_instance` to check ScreenGui.Enabled, then `run_test` for errors
+- "script doesn't run" → `run_code` to verify the script exists (`print(workspace:FindFirstChild("MyScript", true))`) then `run_test` to see errors. Check for `[ScriptName] Initialized` in logs
+- "GUI doesn't show" → `run_code` to check `print(game.StarterGui:FindFirstChild("MyGui"))`, then `run_test` for errors
 - "I have no idea what's happening" → You probably forgot to add Debug.print(). Add them and test again
 
 **MANDATORY: Never tell the user "I can't see your screen" when you have MCP tools. Check yourself.**
