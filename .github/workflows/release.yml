@@ -90,7 +90,7 @@ jobs:
 
       - name: Build rbxsync-mcp for Windows
         run: |
-          git clone --depth 1 --branch v1.3.0 https://github.com/Smokestack-Games/rbxsync.git _rbxsync
+          git clone --depth 1 https://github.com/Roxlit/rbxsync.git _rbxsync
           cd _rbxsync
           cargo build --release -p rbxsync-mcp
           copy target\release\rbxsync-mcp.exe ..\rbxsync-mcp.exe
