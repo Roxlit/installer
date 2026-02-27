@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+use crate::commands::logs::{send_log, LoggerState};
 use crate::error::{InstallerError, Result};
 use crate::util::expand_tilde;
 
@@ -75,6 +76,7 @@ pub async fn start_rbxsync(
     project_path: String,
     on_event: Channel<RbxSyncEvent>,
     state: tauri::State<'_, RbxSyncProcess>,
+    logger_state: tauri::State<'_, LoggerState>,
 ) -> Result<()> {
     // Check if already running
     {
@@ -135,10 +137,17 @@ pub async fn start_rbxsync(
         *guard = Some(child);
     }
 
+    // Extract log sender (logger was initialized by rojo)
+    let log_sender = {
+        let guard = logger_state.logger.lock().await;
+        guard.as_ref().map(|l| l.sender())
+    };
+
     let child_arc = state.child.clone();
     let event_clone = on_event.clone();
 
     // Spawn a task to read stdout and stream events
+    let stdout_log_tx = log_sender.clone();
     let reader_handle = tokio::spawn(async move {
         let mut started_sent = false;
 
@@ -150,6 +159,9 @@ pub async fn start_rbxsync(
                 match lines.next_line().await {
                     Ok(Some(raw_line)) => {
                         let line = strip_ansi(&raw_line);
+                        if let Some(ref tx) = stdout_log_tx {
+                            send_log(tx, "rbxsync", &line);
+                        }
                         // Detect when rbxsync is ready
                         if !started_sent {
                             let lower = line.to_lowercase();
@@ -190,12 +202,16 @@ pub async fn start_rbxsync(
 
     // Also spawn a stderr reader
     let event_stderr = on_event.clone();
+    let stderr_log_tx = log_sender;
     if let Some(stderr) = stderr {
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(raw_line)) = lines.next_line().await {
                 let line = strip_ansi(&raw_line);
+                if let Some(ref tx) = stderr_log_tx {
+                    send_log(tx, "rbxsync-err", &line);
+                }
                 let _ = event_stderr.send(RbxSyncEvent::Output {
                     line,
                     stream: "stderr".into(),

@@ -12,6 +12,7 @@ use tokio::task::JoinHandle;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+use crate::commands::logs::{send_log, LoggerState};
 use crate::commands::rbxsync::rbxsync_bin_path;
 use crate::error::{InstallerError, Result};
 use crate::util::expand_tilde;
@@ -241,6 +242,7 @@ pub async fn start_auto_sync(
     extract_interval_secs: Option<u64>,
     on_event: Channel<SyncEvent>,
     state: tauri::State<'_, AutoSyncState>,
+    logger_state: tauri::State<'_, LoggerState>,
 ) -> Result<()> {
     if state.active.load(Ordering::SeqCst) {
         return Err(InstallerError::Custom(
@@ -251,6 +253,12 @@ pub async fn start_auto_sync(
     state.active.store(true, Ordering::SeqCst);
     let interval = extract_interval_secs.unwrap_or(30);
     let project_path = expand_tilde(&project_path);
+
+    // Extract log sender (logger was initialized by rojo)
+    let log_sender = {
+        let guard = logger_state.logger.lock().await;
+        guard.as_ref().map(|l| l.sender())
+    };
 
     // ── Studio poller task (Studio → FS, backup only) ──
     let poller_event = on_event.clone();
@@ -270,6 +278,9 @@ pub async fn start_auto_sync(
                 Ok(p) if p.is_empty() => continue,
                 Ok(p) => p,
                 Err(e) => {
+                    if let Some(ref tx) = log_sender {
+                        send_log(tx, "sync", &format!("Backup failed: {e}"));
+                    }
                     let _ = poller_event.send(SyncEvent::Error {
                         message: format!("Backup failed: {e}"),
                     });
@@ -277,15 +288,24 @@ pub async fn start_auto_sync(
                 }
             };
 
+            if let Some(ref tx) = log_sender {
+                send_log(tx, "sync", "Extracting instances from Studio...");
+            }
             let _ = poller_event.send(SyncEvent::ExtractStarted);
 
             match run_extract_command(&poller_project).await {
                 Ok(_) => {
+                    if let Some(ref tx) = log_sender {
+                        send_log(tx, "sync", "Extract complete");
+                    }
                     let _ = poller_event.send(SyncEvent::ExtractCompleted {
                         backup_path: backup_path.clone(),
                     });
                 }
                 Err(e) => {
+                    if let Some(ref tx) = log_sender {
+                        send_log(tx, "sync", &format!("Extract error: {e}"));
+                    }
                     let _ = poller_event.send(SyncEvent::Error { message: e });
                 }
             }

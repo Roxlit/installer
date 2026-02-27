@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+use crate::commands::logs::{send_log, LogServerState, LoggerState, SessionLogger};
 use crate::error::{InstallerError, Result};
 use crate::util::expand_tilde;
 
@@ -78,6 +79,8 @@ pub async fn start_rojo(
     project_path: String,
     on_event: Channel<RojoEvent>,
     state: tauri::State<'_, RojoProcess>,
+    logger_state: tauri::State<'_, LoggerState>,
+    log_server_state: tauri::State<'_, LogServerState>,
 ) -> Result<()> {
     // Check if already running
     {
@@ -186,8 +189,14 @@ pub async fn start_rojo(
     // Ensure MCP binary exists (download if missing)
     ensure_mcp_binary().await;
 
+    // Ensure debug plugin is installed in Studio
+    ensure_debug_plugin();
+
     // Ensure AI context file exists (or regenerate if stale)
     ensure_ai_context(project_dir, &project_path);
+
+    // Ensure Debug.luau exists (added in v0.7.0, older projects don't have it)
+    ensure_debug_module(project_dir);
 
     // Ensure project directories exist (user may have deleted scripts/)
     for subdir in &[
@@ -227,10 +236,28 @@ pub async fn start_rojo(
         *guard = Some(child);
     }
 
+    // Initialize session logger (creates .roxlit/logs/, rotates previous log)
+    let log_sender = {
+        let mut guard = logger_state.logger.lock().await;
+        if guard.is_none() {
+            *guard = SessionLogger::new(&project_path).await;
+        }
+        guard.as_ref().map(|l| l.sender())
+    };
+
+    // Start the HTTP log server for Studio output capture
+    if let Some(ref tx) = log_sender {
+        if let Some(handle) = crate::commands::logs::start_log_server(tx.clone()).await {
+            log_server_state.set_handle(handle).await;
+            send_log(tx, "roxlit", "Studio log server started on 127.0.0.1:19556");
+        }
+    }
+
     let child_arc = state.child.clone();
     let event_clone = on_event.clone();
 
     // Spawn a task to read stdout + stderr and stream events
+    let stdout_log_tx = log_sender.clone();
     let reader_handle = tokio::spawn(async move {
         let mut port_detected = false;
 
@@ -243,6 +270,9 @@ pub async fn start_rojo(
                 match lines.next_line().await {
                     Ok(Some(raw_line)) => {
                         let line = strip_ansi(&raw_line);
+                        if let Some(ref tx) = stdout_log_tx {
+                            send_log(tx, "rojo", &line);
+                        }
                         // Try to detect the port from rojo output
                         if !port_detected {
                             if let Some(port) = parse_rojo_port(&line) {
@@ -282,12 +312,16 @@ pub async fn start_rojo(
 
     // Also spawn a stderr reader
     let event_stderr = on_event.clone();
+    let stderr_log_tx = log_sender;
     if let Some(stderr) = stderr {
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(raw_line)) = lines.next_line().await {
                 let line = strip_ansi(&raw_line);
+                if let Some(ref tx) = stderr_log_tx {
+                    send_log(tx, "rojo-err", &line);
+                }
                 let _ = event_stderr.send(RojoEvent::Output {
                     line,
                     stream: "stderr".into(),
@@ -307,7 +341,10 @@ pub async fn start_rojo(
 
 /// Stop the running rojo serve process.
 #[tauri::command]
-pub async fn stop_rojo(state: tauri::State<'_, RojoProcess>) -> Result<()> {
+pub async fn stop_rojo(
+    state: tauri::State<'_, RojoProcess>,
+    log_server_state: tauri::State<'_, LogServerState>,
+) -> Result<()> {
     // Kill the child process
     {
         let mut guard = state.child.lock().await;
@@ -326,6 +363,9 @@ pub async fn stop_rojo(state: tauri::State<'_, RojoProcess>) -> Result<()> {
             handle.abort();
         }
     }
+
+    // Stop the Studio log HTTP server
+    log_server_state.stop().await;
 
     Ok(())
 }
@@ -601,22 +641,80 @@ fn ensure_mcp_config(project_dir: &std::path::Path, ai_tool: &str) {
     }
 
     // Check if MCP config already exists for this AI tool
-    let config_exists = match ai_tool {
-        "claude" => project_dir.join(".mcp.json").exists(),
-        "cursor" => project_dir.join(".cursor").join("mcp.json").exists(),
-        "vscode" => project_dir.join(".vscode").join("mcp.json").exists(),
+    let config_path = match ai_tool {
+        "claude" => Some(project_dir.join(".mcp.json")),
+        "cursor" => Some(project_dir.join(".cursor").join("mcp.json")),
+        "vscode" => Some(project_dir.join(".vscode").join("mcp.json")),
         "windsurf" => dirs::home_dir()
-            .map(|h| h.join(".codeium").join("windsurf").join("mcp_config.json").exists())
-            .unwrap_or(false),
-        _ => project_dir.join(".mcp.json").exists(),
+            .map(|h| h.join(".codeium").join("windsurf").join("mcp_config.json")),
+        _ => Some(project_dir.join(".mcp.json")),
     };
 
-    if config_exists {
+    if let Some(ref path) = config_path {
+        if path.exists() {
+            // Regenerate if the existing config has Windows backslashes in paths
+            // (bug: \b = backspace and \r = carriage return in JSON, corrupts the file).
+            let has_backslash_bug = std::fs::read_to_string(path)
+                .map(|c| c.contains(".roxlit\\"))
+                .unwrap_or(false);
+            if !has_backslash_bug {
+                return;
+            }
+        }
+    } else {
         return;
     }
 
     // Create MCP config
     let _ = crate::commands::context::configure_mcp(project_dir, ai_tool);
+}
+
+/// Ensure the Debug.luau module exists in the project.
+///
+/// Added in v0.7.0 — older projects don't have it. The AI context references
+/// `require(game.ReplicatedStorage.Debug)`, so the file must exist.
+fn ensure_debug_module(project_dir: &std::path::Path) {
+    let debug_path = project_dir
+        .join("scripts")
+        .join("ReplicatedStorage")
+        .join("Debug.luau");
+    if !debug_path.exists() {
+        let _ = std::fs::create_dir_all(debug_path.parent().unwrap());
+        let _ = std::fs::write(&debug_path, crate::templates::debug_module());
+    }
+}
+
+/// Ensure the RoxlitDebug Studio plugin is installed and up to date.
+///
+/// Writes `RoxlitDebug.rbxm` (binary format) to the Studio local plugins folder.
+/// Always overwrites — the file is small and version checking binary content is complex.
+/// Also cleans up the old `.rbxmx` file if it exists.
+/// Non-critical — silently ignores errors.
+fn ensure_debug_plugin() {
+    let plugins_dir = if cfg!(target_os = "windows") {
+        dirs::data_local_dir().map(|d| d.join("Roblox").join("Plugins"))
+    } else if cfg!(target_os = "macos") {
+        dirs::home_dir().map(|d| d.join("Library").join("Roblox").join("Plugins"))
+    } else {
+        None
+    };
+
+    let plugins_dir = match plugins_dir {
+        Some(d) => d,
+        None => return,
+    };
+
+    let _ = std::fs::create_dir_all(&plugins_dir);
+
+    // Clean up old .rbxmx version (Studio doesn't load XML plugins)
+    let old_xml = plugins_dir.join("RoxlitDebug.rbxmx");
+    if old_xml.exists() {
+        let _ = std::fs::remove_file(&old_xml);
+    }
+
+    // Write the binary .rbxm plugin
+    let plugin_path = plugins_dir.join("RoxlitDebug.rbxm");
+    let _ = std::fs::write(&plugin_path, crate::templates::debug_plugin_rbxm());
 }
 
 /// Kill orphaned rojo processes from a previous session that may still hold the port.

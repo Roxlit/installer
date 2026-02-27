@@ -93,6 +93,8 @@ pub fn run() {
         .manage(commands::rojo::RojoProcess::default())
         .manage(commands::rbxsync::RbxSyncProcess::default())
         .manage(commands::autosync::AutoSyncState::default())
+        .manage(commands::logs::LoggerState::default())
+        .manage(commands::logs::LogServerState::default())
         .invoke_handler(tauri::generate_handler![
             commands::detect::detect_environment,
             commands::install::run_installation,
@@ -127,6 +129,10 @@ pub fn run() {
                 }
                 // Stop auto-sync when the window is closed
                 if let Some(state) = _window.try_state::<commands::autosync::AutoSyncState>() {
+                    state.inner().kill_sync();
+                }
+                // Stop the Studio log HTTP server when the window is closed
+                if let Some(state) = _window.try_state::<commands::logs::LogServerState>() {
                     state.inner().kill_sync();
                 }
             }
