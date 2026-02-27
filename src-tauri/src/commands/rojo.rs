@@ -4,9 +4,6 @@ use tauri::ipc::Channel;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 use crate::commands::logs::{send_log, LogServerState, LoggerState, SessionLogger};
 use crate::error::{InstallerError, Result};
 use crate::util::expand_tilde;
@@ -20,6 +17,7 @@ pub enum RojoEvent {
     #[serde(rename_all = "camelCase")]
     Started { port: u16 },
     Stopped { code: Option<i32> },
+    #[allow(dead_code)]
     Error { message: String },
 }
 
@@ -57,6 +55,123 @@ impl RojoProcess {
     }
 }
 
+/// Managed state holding the background rbxsync serve process (needed for MCP).
+///
+/// This runs silently — no UI, no events. It just needs to be alive on port 44755
+/// so that rbxsync-mcp can send commands to Studio via the rbxsync plugin.
+pub struct RbxSyncProcess {
+    child: Arc<Mutex<Option<tokio::process::Child>>>,
+}
+
+impl Default for RbxSyncProcess {
+    fn default() -> Self {
+        Self {
+            child: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl RbxSyncProcess {
+    /// Kill the process synchronously (for window close handler).
+    pub fn kill_sync(&self) {
+        if let Ok(mut guard) = self.child.try_lock() {
+            if let Some(ref mut child) = *guard {
+                let _ = child.start_kill();
+            }
+            *guard = None;
+        }
+    }
+
+    /// Start rbxsync serve silently in the background.
+    async fn start(&self, project_path: &str, log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) {
+        // Already running?
+        {
+            let mut guard = self.child.lock().await;
+            if let Some(ref mut child) = *guard {
+                if child.try_wait().ok().flatten().is_none() {
+                    return; // Still running
+                }
+            }
+            *guard = None;
+        }
+
+        let bin = rbxsync_bin_path();
+        if bin.is_none() {
+            if let Some(tx) = log_tx {
+                send_log(tx, "roxlit", "rbxsync binary not found — MCP tools unavailable");
+            }
+            return;
+        }
+        let bin = bin.unwrap();
+
+        let mut cmd = tokio::process::Command::new(&bin);
+        cmd.arg("serve")
+            .current_dir(project_path)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                // Pipe stdout/stderr to session log (silent, no frontend events)
+                if let Some(tx) = log_tx {
+                    if let Some(stdout) = child.stdout.take() {
+                        let tx_out = tx.clone();
+                        tokio::spawn(async move {
+                            let reader = BufReader::new(stdout);
+                            let mut lines = reader.lines();
+                            while let Ok(Some(line)) = lines.next_line().await {
+                                send_log(&tx_out, "rbxsync", &strip_ansi(&line));
+                            }
+                        });
+                    }
+                    if let Some(stderr) = child.stderr.take() {
+                        let tx_err = tx.clone();
+                        tokio::spawn(async move {
+                            let reader = BufReader::new(stderr);
+                            let mut lines = reader.lines();
+                            while let Ok(Some(line)) = lines.next_line().await {
+                                send_log(&tx_err, "rbxsync-err", &strip_ansi(&line));
+                            }
+                        });
+                    }
+                    send_log(tx, "roxlit", "rbxsync serve started (MCP bridge)");
+                }
+
+                let mut guard = self.child.lock().await;
+                *guard = Some(child);
+            }
+            Err(e) => {
+                if let Some(tx) = log_tx {
+                    send_log(tx, "roxlit", &format!("Failed to start rbxsync serve: {e}"));
+                }
+            }
+        }
+    }
+
+    /// Stop the rbxsync serve process.
+    async fn stop(&self) {
+        let mut guard = self.child.lock().await;
+        if let Some(ref mut child) = *guard {
+            let _ = child.kill().await;
+        }
+        *guard = None;
+    }
+}
+
+/// Resolve the rbxsync binary path (~/.roxlit/bin/rbxsync).
+fn rbxsync_bin_path() -> Option<String> {
+    let bin_name = if cfg!(target_os = "windows") { "rbxsync.exe" } else { "rbxsync" };
+    let path = dirs::home_dir()?.join(".roxlit").join("bin").join(bin_name);
+    if path.exists() {
+        Some(path.to_string_lossy().to_string())
+    } else {
+        None
+    }
+}
+
 /// Resolve the rojo binary path (aftman installs to ~/.aftman/bin/).
 fn rojo_bin_path() -> String {
     if let Some(home) = dirs::home_dir() {
@@ -79,6 +194,7 @@ pub async fn start_rojo(
     project_path: String,
     on_event: Channel<RojoEvent>,
     state: tauri::State<'_, RojoProcess>,
+    rbxsync_state: tauri::State<'_, RbxSyncProcess>,
     logger_state: tauri::State<'_, LoggerState>,
     log_server_state: tauri::State<'_, LogServerState>,
 ) -> Result<()> {
@@ -114,25 +230,21 @@ pub async fn start_rojo(
             )))?;
     }
 
-    // Migrate legacy projects: move .luau files from src/ to scripts/
-    let scripts_dir = project_dir.join("scripts");
-    let legacy_src = project_dir.join("src");
-    if !scripts_dir.exists() && legacy_src.exists() {
-        // Check if src/ has any .luau files (legacy layout)
-        let has_luau = has_luau_files(&legacy_src);
-        if has_luau {
-            let _ = std::fs::create_dir_all(&scripts_dir);
-            move_luau_tree(&legacy_src, &scripts_dir);
-        }
+    // Migrate legacy projects: move files from scripts/ to src/
+    let src_dir = project_dir.join("src");
+    let legacy_scripts = project_dir.join("scripts");
+    if legacy_scripts.exists() && has_luau_files(&legacy_scripts) {
+        let _ = std::fs::create_dir_all(&src_dir);
+        move_luau_tree(&legacy_scripts, &src_dir);
     }
 
     let project_json = project_dir.join("default.project.json");
-    // Rewrite project.json if it still references src/ for scripts
+    // Rewrite project.json if it still references scripts/ (old layout)
     if project_json.exists() {
         if let Ok(content) = std::fs::read_to_string(&project_json) {
-            if content.contains("\"src/ServerScriptService\"")
-                || content.contains("\"src/StarterPlayer")
-                || content.contains("\"src/ReplicatedStorage\"")
+            if content.contains("\"scripts/ServerScriptService\"")
+                || content.contains("\"scripts/StarterPlayer")
+                || content.contains("\"scripts/ReplicatedStorage\"")
             {
                 let name = project_dir
                     .file_name()
@@ -168,21 +280,21 @@ pub async fn start_rojo(
         let _ = std::fs::write(&rbxsync_json, crate::templates::rbxsync_json(name));
     }
 
-    // Ensure .rbxsyncignore exists and includes scripts/
+    // Ensure .rbxsyncignore exists and includes src/
     let rbxsyncignore = project_dir.join(".rbxsyncignore");
     if rbxsyncignore.exists() {
         if let Ok(content) = std::fs::read_to_string(&rbxsyncignore) {
-            if !content.contains("scripts/") {
+            if !content.contains("src/") {
                 let _ = std::fs::write(
                     &rbxsyncignore,
-                    format!("{}scripts/\n", content),
+                    format!("{}src/\n", content),
                 );
             }
         }
     } else {
         let _ = std::fs::write(
             &rbxsyncignore,
-            ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nscripts/\n",
+            ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nsrc/\n",
         );
     }
 
@@ -198,17 +310,17 @@ pub async fn start_rojo(
     // Ensure Debug.luau exists (added in v0.7.0, older projects don't have it)
     ensure_debug_module(project_dir);
 
-    // Ensure project directories exist (user may have deleted scripts/)
+    // Ensure project directories exist (user may have deleted src/)
     for subdir in &[
-        "scripts/ServerScriptService",
-        "scripts/StarterPlayer/StarterPlayerScripts",
-        "scripts/StarterPlayer/StarterCharacterScripts",
-        "scripts/ReplicatedStorage",
-        "scripts/ReplicatedFirst",
-        "scripts/ServerStorage",
-        "scripts/Workspace",
-        "scripts/StarterGui",
-        "scripts/StarterPack",
+        "src/ServerScriptService",
+        "src/StarterPlayer/StarterPlayerScripts",
+        "src/StarterPlayer/StarterCharacterScripts",
+        "src/ReplicatedStorage",
+        "src/ReplicatedFirst",
+        "src/ServerStorage",
+        "src/Workspace",
+        "src/StarterGui",
+        "src/StarterPack",
     ] {
         let dir = project_dir.join(subdir);
         if !dir.exists() {
@@ -252,6 +364,9 @@ pub async fn start_rojo(
             send_log(tx, "roxlit", "Studio log server started on 127.0.0.1:19556");
         }
     }
+
+    // Start rbxsync serve silently (needed for MCP tools: run_code, run_test, etc.)
+    rbxsync_state.start(&project_path, log_sender.as_ref()).await;
 
     let child_arc = state.child.clone();
     let event_clone = on_event.clone();
@@ -343,6 +458,7 @@ pub async fn start_rojo(
 #[tauri::command]
 pub async fn stop_rojo(
     state: tauri::State<'_, RojoProcess>,
+    rbxsync_state: tauri::State<'_, RbxSyncProcess>,
     log_server_state: tauri::State<'_, LogServerState>,
 ) -> Result<()> {
     // Kill the child process
@@ -363,6 +479,9 @@ pub async fn stop_rojo(
             handle.abort();
         }
     }
+
+    // Stop rbxsync serve
+    rbxsync_state.stop().await;
 
     // Stop the Studio log HTTP server
     log_server_state.stop().await;
@@ -451,8 +570,8 @@ fn has_luau_files(dir: &std::path::Path) -> bool {
     false
 }
 
-/// Move .luau files from src/ to scripts/, preserving directory structure.
-/// Only moves .luau files — .rbxjson files stay in src/ for rbxsync.
+/// Move .luau and .model.json files from scripts/ to src/, preserving directory structure.
+/// Handles migration from the legacy layout where Rojo used scripts/ to avoid conflicting with rbxsync's src/.
 fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
     if let Ok(entries) = std::fs::read_dir(src) {
         for entry in entries.flatten() {
@@ -462,11 +581,15 @@ fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
                 let sub_dest = dest.join(&name);
                 let _ = std::fs::create_dir_all(&sub_dest);
                 move_luau_tree(&path, &sub_dest);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("luau") {
-                let dest_file = dest.join(&name);
-                // Move = copy + delete (works across filesystems)
-                if std::fs::copy(&path, &dest_file).is_ok() {
-                    let _ = std::fs::remove_file(&path);
+            } else {
+                let ext = path.extension().and_then(|e| e.to_str());
+                let is_model_json = path.to_str().map_or(false, |s| s.ends_with(".model.json"));
+                if ext == Some("luau") || is_model_json {
+                    let dest_file = dest.join(&name);
+                    // Move = copy + delete (works across filesystems)
+                    if std::fs::copy(&path, &dest_file).is_ok() {
+                        let _ = std::fs::remove_file(&path);
+                    }
                 }
             }
         }
@@ -675,7 +798,7 @@ fn ensure_mcp_config(project_dir: &std::path::Path, ai_tool: &str) {
 /// `require(game.ReplicatedStorage.Debug)`, so the file must exist.
 fn ensure_debug_module(project_dir: &std::path::Path) {
     let debug_path = project_dir
-        .join("scripts")
+        .join("src")
         .join("ReplicatedStorage")
         .join("Debug.luau");
     if !debug_path.exists() {

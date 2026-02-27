@@ -65,7 +65,7 @@ export interface DetectionResult {
   rojoVersion: string | null;
   aftmanInstalled: boolean;
   aftmanVersion: string | null;
-  rbxsyncInstalled: boolean;
+  rbxsyncInstalled: boolean; // Still needed for install step (rbxsync-mcp)
   rbxsyncVersion: string | null;
 }
 
@@ -146,25 +146,3 @@ export type RojoEvent =
 
 export type RojoStatus = "stopped" | "starting" | "running" | "error";
 
-// --- RbxSync events (matches Rust RbxSyncEvent) ---
-
-export type RbxSyncEvent =
-  | { event: "output"; data: { line: string; stream: string } }
-  | { event: "started" }
-  | { event: "stopped"; data: { code: number | null } }
-  | { event: "error"; data: { message: string } };
-
-export type RbxSyncStatus = "stopped" | "starting" | "running" | "error" | "unavailable";
-
-// --- Auto-sync events (matches Rust SyncEvent) ---
-
-export type SyncEvent =
-  | { event: "fileChanged"; data: { path: string } }
-  | { event: "syncStarted" }
-  | { event: "syncCompleted"; data: { filesSynced: number } }
-  | { event: "extractStarted" }
-  | { event: "extractCompleted"; data: { backupPath: string } }
-  | { event: "conflict"; data: { path: string; backupPath: string } }
-  | { event: "error"; data: { message: string } };
-
-export type AutoSyncStatus = "off" | "idle" | "syncing" | "extracting" | "error";

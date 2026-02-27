@@ -791,11 +791,11 @@ prompt.Parent = doorPart -- Prompt goes on the interactable part
 | Script type | Where it goes | Example |
 |-------------|---------------|---------|
 | Controls a specific object | Inside that object's Model | DoorController inside Door Model |
-| Game-wide system | `scripts/ServerScriptService/` | RoundManager, DataSaveSystem |
-| Player-specific client logic | `scripts/StarterPlayer/StarterPlayerScripts/` | CameraController, InputHandler |
-| Character-specific logic | `scripts/StarterPlayer/StarterCharacterScripts/` | AnimationController |
-| Shared utilities | `scripts/ReplicatedStorage/` | Utility modules used by both server and client |
-| GUI logic | `scripts/StarterGui/` | Menu handlers, HUD updates |
+| Game-wide system | `src/ServerScriptService/` | RoundManager, DataSaveSystem |
+| Player-specific client logic | `src/StarterPlayer/StarterPlayerScripts/` | CameraController, InputHandler |
+| Character-specific logic | `src/StarterPlayer/StarterCharacterScripts/` | AnimationController |
+| Shared utilities | `src/ReplicatedStorage/` | Utility modules used by both server and client |
+| GUI logic | `src/StarterGui/` | Menu handlers, HUD updates |
 
 ## Z-Fighting (Overlapping Surfaces)
 

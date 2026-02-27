@@ -101,8 +101,6 @@ export default function App() {
           aiTool={launcher.project.aiTool}
           rojoStatus={launcher.rojoStatus}
           rojoPort={launcher.rojoPort}
-          rbxsyncStatus={launcher.rbxsyncStatus}
-          autoSyncStatus={launcher.autoSyncStatus}
           logs={launcher.logs}
           error={launcher.error}
           update={update}
