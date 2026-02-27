@@ -12,8 +12,7 @@ Works with Claude Code, Cursor, Windsurf, and any AI tool that reads project con
 Roxlit automates the entire setup process for AI-powered Roblox development:
 
 - **Rojo + Aftman** installed and configured (no terminal needed)
-- **RbxSync** for two-way instance sync between your IDE and Studio
-- **MCP server** so AI tools can read/write Studio directly
+- **MCP server** (via RbxSync) so AI tools can execute Luau in Studio, insert models, and extract games to files
 - **7 AI context packs** that teach your AI how to write correct Luau code
 - **Debug logging** for every installation step
 
@@ -63,7 +62,7 @@ The AI reads these files automatically and writes code that follows best practic
 | Frontend | React 19, TypeScript, Tailwind CSS v4 |
 | Backend | Rust |
 | File sync | [Rojo](https://rojo.space) |
-| Instance sync | [RbxSync](https://github.com/Roxlit/installer) + MCP |
+| MCP server | [RbxSync](https://github.com/Roxlit/rbxsync) (fork with broken tools disabled) |
 | Builds | GitHub Actions (NSIS installer) |
 
 ## Building from source
