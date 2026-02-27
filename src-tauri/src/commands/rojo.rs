@@ -686,9 +686,10 @@ fn ensure_debug_module(project_dir: &std::path::Path) {
 
 /// Ensure the RoxlitDebug Studio plugin is installed and up to date.
 ///
-/// Writes `RoxlitDebug.rbxmx` to the Studio local plugins folder. If the file already
-/// exists and contains the current version string, it's left alone. Otherwise it's
-/// (re)written. Non-critical — silently ignores errors.
+/// Writes `RoxlitDebug.rbxm` (binary format) to the Studio local plugins folder.
+/// Always overwrites — the file is small and version checking binary content is complex.
+/// Also cleans up the old `.rbxmx` file if it exists.
+/// Non-critical — silently ignores errors.
 fn ensure_debug_plugin() {
     let plugins_dir = if cfg!(target_os = "windows") {
         dirs::data_local_dir().map(|d| d.join("Roblox").join("Plugins"))
@@ -703,20 +704,17 @@ fn ensure_debug_plugin() {
         None => return,
     };
 
-    let plugin_path = plugins_dir.join("RoxlitDebug.rbxmx");
+    let _ = std::fs::create_dir_all(&plugins_dir);
 
-    // Check if current version is already installed
-    if plugin_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&plugin_path) {
-            if content.contains(&format!("RoxlitDebug v{}", crate::templates::DEBUG_PLUGIN_VERSION)) {
-                return; // Already up to date
-            }
-        }
+    // Clean up old .rbxmx version (Studio doesn't load XML plugins)
+    let old_xml = plugins_dir.join("RoxlitDebug.rbxmx");
+    if old_xml.exists() {
+        let _ = std::fs::remove_file(&old_xml);
     }
 
-    // Write (or overwrite) the plugin
-    let _ = std::fs::create_dir_all(&plugins_dir);
-    let _ = std::fs::write(&plugin_path, crate::templates::debug_plugin_rbxmx());
+    // Write the binary .rbxm plugin
+    let plugin_path = plugins_dir.join("RoxlitDebug.rbxm");
+    let _ = std::fs::write(&plugin_path, crate::templates::debug_plugin_rbxm());
 }
 
 /// Kill orphaned rojo processes from a previous session that may still hold the port.

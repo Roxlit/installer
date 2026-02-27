@@ -256,25 +256,82 @@ end)
     )
 }
 
-/// Returns the .rbxmx XML wrapper for the debug plugin, ready to drop into
-/// the Studio local plugins folder.
-pub fn debug_plugin_rbxmx() -> String {
-    let luau = debug_plugin_luau();
-    // CDATA treats content as literal text — no XML escaping needed.
-    // RunContext 0 = Legacy (default for plugins in the local Plugins folder).
-    format!(
-        r#"<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
-  <Item class="Script" referent="RoxlitDebug">
-    <Properties>
-      <string name="Name">RoxlitDebug</string>
-      <ProtectedString name="Source"><![CDATA[{luau}]]></ProtectedString>
-      <bool name="Disabled">false</bool>
-    </Properties>
-  </Item>
-</roblox>
-"#,
-        luau = luau
-    )
+/// Returns the debug plugin as a binary .rbxm file (Roblox Binary Model format).
+/// Studio only loads .rbxm for local plugins — .rbxmx (XML) is rejected.
+pub fn debug_plugin_rbxm() -> Vec<u8> {
+    let source = debug_plugin_luau();
+    let name = "RoxlitDebug";
+
+    let mut buf = Vec::new();
+
+    // ── File Header (32 bytes) ──
+    buf.extend_from_slice(b"<roblox!");
+    buf.extend_from_slice(&[0x89, 0xFF, 0x0D, 0x0A, 0x1A, 0x0A]); // signature
+    buf.extend_from_slice(&0u16.to_le_bytes());   // version
+    buf.extend_from_slice(&1i32.to_le_bytes());   // num classes
+    buf.extend_from_slice(&1i32.to_le_bytes());   // num instances
+    buf.extend_from_slice(&[0u8; 8]);             // reserved
+
+    // ── INST chunk (defines the Script class) ──
+    {
+        let mut d = Vec::new();
+        d.extend_from_slice(&0i32.to_le_bytes()); // classID
+        rbxm_string(&mut d, "Script");
+        d.push(0);                                 // objectFormat (regular)
+        d.extend_from_slice(&1i32.to_le_bytes()); // instanceCount
+        d.extend_from_slice(&0i32.to_be_bytes()); // referent 0 (transformed, interleaved BE)
+        rbxm_chunk(&mut buf, b"INST", &d);
+    }
+
+    // ── PROP: Name (String = 0x01) ──
+    {
+        let mut d = Vec::new();
+        d.extend_from_slice(&0i32.to_le_bytes());
+        rbxm_string(&mut d, "Name");
+        d.push(0x01);
+        rbxm_string(&mut d, name);
+        rbxm_chunk(&mut buf, b"PROP", &d);
+    }
+
+    // ── PROP: Source (String = 0x01) ──
+    {
+        let mut d = Vec::new();
+        d.extend_from_slice(&0i32.to_le_bytes());
+        rbxm_string(&mut d, "Source");
+        d.push(0x01);
+        rbxm_string(&mut d, &source);
+        rbxm_chunk(&mut buf, b"PROP", &d);
+    }
+
+    // ── PRNT chunk (parent relationships) ──
+    {
+        let mut d = Vec::new();
+        d.push(0);                                 // version
+        d.extend_from_slice(&1i32.to_le_bytes()); // count
+        d.extend_from_slice(&0i32.to_be_bytes()); // child ref 0 (transformed, interleaved BE)
+        d.extend_from_slice(&1i32.to_be_bytes()); // parent ref -1 → transformed = 1 (no parent)
+        rbxm_chunk(&mut buf, b"PRNT", &d);
+    }
+
+    // ── END chunk ──
+    rbxm_chunk(&mut buf, b"END\0", b"</roblox>");
+
+    buf
+}
+
+/// Write a length-prefixed UTF-8 string (u32 LE length + bytes).
+fn rbxm_string(buf: &mut Vec<u8>, s: &str) {
+    buf.extend_from_slice(&(s.len() as u32).to_le_bytes());
+    buf.extend_from_slice(s.as_bytes());
+}
+
+/// Write an uncompressed chunk: 4-byte name + header + raw data.
+fn rbxm_chunk(buf: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
+    buf.extend_from_slice(name);
+    buf.extend_from_slice(&0u32.to_le_bytes());                  // compressedLen (0 = raw)
+    buf.extend_from_slice(&(data.len() as u32).to_le_bytes());  // uncompressedLen
+    buf.extend_from_slice(&[0u8; 4]);                            // reserved
+    buf.extend_from_slice(data);
 }
 
 /// Marker prefix used to embed the version in the generated context file.

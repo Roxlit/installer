@@ -776,8 +776,8 @@ fn install_debug_plugin(config: &InstallConfig, on_event: &Channel<SetupEvent>) 
         return;
     }
 
-    let plugin_path = plugins_dir.join("RoxlitDebug.rbxmx");
-    match std::fs::write(&plugin_path, crate::templates::debug_plugin_rbxmx()) {
+    let plugin_path = plugins_dir.join("RoxlitDebug.rbxm");
+    match std::fs::write(&plugin_path, crate::templates::debug_plugin_rbxm()) {
         Ok(_) => {}
         Err(e) => {
             let _ = on_event.send(SetupEvent::StepWarning {
