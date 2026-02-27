@@ -239,6 +239,12 @@ end)
 -- Initial health check
 checkHealth()
 
+if serverAlive then
+	print("[RoxlitDebug] v{version} loaded — connected to Roxlit launcher")
+else
+	print("[RoxlitDebug] v{version} loaded — launcher not detected (logs won't be captured)")
+end
+
 -- Periodic flush + health check
 task.spawn(function()
 	while true do
