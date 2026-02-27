@@ -163,7 +163,7 @@ pub fn rbxsync_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.7.0";
+pub const CONTEXT_VERSION: &str = "0.7.2";
 
 /// Debug plugin version — bump to force re-installation when plugin code changes.
 pub const DEBUG_PLUGIN_VERSION: &str = "1.0.1";
@@ -413,13 +413,14 @@ Tools:
 - `run_test` with `background: true` → **UNRELIABLE**. Background playtests often drop after 1-2 seconds. Avoid using this.
 - `bot_observe`, `bot_move`, `bot_action`, `bot_wait_for` → **DO NOT USE**. Bot tools are unstable and frequently fail with timeouts or connection errors. Do not waste tokens retrying them.
 
-**For interactive testing** (player sitting in a vehicle, pressing keys, testing GUI interactions): ask the user to playtest manually (F5) and then read `.roxlit/logs/latest.log` for the Debug.print output. You cannot simulate player input via MCP.
+**For interactive testing** (player sitting in a vehicle, pressing keys, testing GUI interactions): ask the user to playtest manually (F5) and then read `.roxlit/logs/latest.log` for the Debug.print output. You cannot simulate player input via MCP. **This only works if you added Debug.print() calls to the scripts.** If there are no prints, there are no logs. Always add logging FIRST.
 
 **Common debugging patterns:**
-- "car doesn't move" → `run_test`, read the output for errors (missing VehicleSeat? wrong property name?)
+- "car doesn't move" → read logs for `[VehicleCtrl]` prints. No prints? You forgot Debug.print(). Add them first, then test again
 - "sound doesn't play" → `run_code` to check `game.Workspace.Model.Sound.SoundId` and verify it's not empty
-- "script doesn't run" → `get_instance` to verify the script exists in the right location, then `run_test` to see if there are errors
+- "script doesn't run" → `get_instance` to verify the script exists in the right location, then `run_test` to see if there are errors. Check for `[ScriptName] Initialized` in logs
 - "GUI doesn't show" → `get_instance` to check ScreenGui.Enabled, then `run_test` for errors
+- "I have no idea what's happening" → You probably forgot to add Debug.print(). Add them and test again
 
 **MANDATORY: Never tell the user "I can't see your screen" when you have MCP tools. Check yourself.**
 
@@ -560,11 +561,12 @@ If the user reports lost changes to instances, check `.roxlit/backups/` for rece
 
 Without MCP tools, you cannot directly run code or tests in Studio. But Roxlit captures Studio output automatically:
 
-1. **Ask them to playtest**: Press F5 (Play) in Studio to run the game
-2. **Read the logs**: `.roxlit/logs/latest.log` captures Studio console output (prints, warnings, errors) in real-time — check `[studio-err]` for errors first
-3. **If logs are empty**: The RoxlitDebug plugin may not be loaded yet — ask the user to restart Studio once so it picks up the plugin
-4. **Fallback**: Ask the user to check the Output panel in Studio, or click "Copy All" in the Roxlit launcher terminal
-5. **Analyze the error**: Once you have the error text, diagnose and fix it
+1. **FIRST: Make sure your scripts have Debug.print() calls** — if you didn't add them, the logs will be empty and useless. Go add them NOW before asking the user to test
+2. **Ask them to playtest**: Press F5 (Play) in Studio to run the game
+3. **Read the logs**: `.roxlit/logs/latest.log` captures Studio console output (prints, warnings, errors) in real-time — check `[studio-err]` for errors first
+4. **If logs are empty**: Either the RoxlitDebug plugin isn't loaded (ask user to restart Studio), OR you forgot to add Debug.print() calls (go add them)
+5. **Fallback**: Ask the user to check the Output panel in Studio, or click "Copy All" in the Roxlit launcher terminal
+6. **Analyze the error**: Once you have the error text, diagnose and fix it
 
 Common patterns:
 - `"X is not a valid member of Y"` → wrong property name or instance path
@@ -658,6 +660,21 @@ Workspace/
 - **Never call DataStore without `pcall()`** → DataStore calls can fail
 - **Testing**: Scripts don't run in edit mode. Press Play (F5) for server + client, Run (F8) for server-only.
 - **MANDATORY — Studio UI**: Before telling the user where to find ANYTHING in Studio (Output, panels, menus, buttons), you MUST first read `.roxlit/context/studio-ui.md`. Do NOT rely on your own knowledge of Studio — it is outdated and wrong (e.g., there is NO "View" tab in the new Studio UI). Read the file first, then answer.
+
+## IMPORTANT: Use Existing Community Systems for Complex Features
+
+**Before building any complex system from scratch, SEARCH THE WEB for existing open-source Roblox community solutions.** The Roblox community has spent years building and refining systems for common game features. Using a battle-tested community system and customizing it is ALWAYS better than reinventing the wheel.
+
+**Systems you should NEVER build from scratch — search for existing ones first:**
+- **Vehicle physics** (chassis, suspension, steering) → search `roblox open source vehicle chassis A-Chassis site:devforum.roblox.com`
+- **Combat/weapon systems** → search `roblox open source combat framework site:devforum.roblox.com`
+- **Inventory/backpack systems** → search `roblox inventory system open source`
+- **Dialog/quest systems** → search `roblox quest system open source`
+- **Round-based game framework** → search `roblox round system framework`
+
+**What YOU should build:** everything on top of the community base — appearance, game-specific features, custom UI, sounds, effects, unique mechanics. The community system is the foundation; the user's creative vision is what you add.
+
+**Always mention licensing**: tell the user to check the original source for license terms before using in a published game. Most community systems are free to use with credit, but the user should verify.
 {rbxsync_section}## Studio Output Logs
 
 Roxlit captures **all Roblox Studio output** (prints, warnings, errors) in real-time via a local plugin. When the user presses Play (F5), every `print()`, `warn()`, and `error()` from their scripts appears in `.roxlit/logs/latest.log` alongside Rojo and RbxSync logs.
@@ -670,42 +687,55 @@ Roxlit captures **all Roblox Studio output** (prints, warnings, errors) in real-
 - `[rojo]` / `[rojo-err]` — Rojo sync output
 - `[rbxsync]` / `[rbxsync-err]` — RbxSync output
 
-### MANDATORY: Code Instrumentation with Debug Module
+### *** MANDATORY: Debug.print() in EVERY Script — NO EXCEPTIONS ***
 
-Every Luau script you create or modify MUST include strategic debug prints for debugging visibility. This is NOT optional — it is how you (the AI) get runtime feedback.
+**If you write a script without Debug.print() calls, you are working blind.** You will not see errors, you will not know what executed, you will not be able to debug. This is the #1 cause of wasted time and failed implementations.
 
-**IMPORTANT:** Use `Debug.print()` / `Debug.warn()` instead of raw `print()` / `warn()`. The Debug module (in `ReplicatedStorage/Debug.luau`) only outputs in Studio — silent in production. This prevents leaking internal state to players via the client console (F9).
+**RULE: Every script you create or modify MUST have Debug.print() calls.** No exceptions. No "I'll add them later." Add them NOW, on every script, every time.
 
 ```lua
 local Debug = require(game.ReplicatedStorage.Debug)
 ```
 
+The Debug module (`ReplicatedStorage/Debug.luau`) only outputs in Studio — silent in production. This prevents leaking internal state to players via the client console (F9). Use `Debug.print()` / `Debug.warn()` instead of raw `print()` / `warn()`.
+
 **Format**: `Debug.print("[ScriptName] Description:", value)`
 
-**Where to add debug prints:**
-- At script/function start: `Debug.print("[DoorController] Initialized")`
-- Before important operations: `Debug.print("[DataManager] Saving data for:", player.Name)`
-- After important operations: `Debug.print("[DataManager] Save complete, entries:", #data)`
-- On errors/edge cases: `Debug.warn("[VehicleSeat] No wheels found in model:", model.Name)`
-- With relevant values: `Debug.print("[RoundManager] Round started, players:", #players, "map:", mapName)`
+**MINIMUM required debug prints per script:**
+1. **Script start**: `Debug.print("[ScriptName] Initialized")` — confirms the script loaded
+2. **Every event/callback entry**: `Debug.print("[ScriptName] EventName fired:", relevantValue)` — confirms it triggered
+3. **Before critical operations**: `Debug.print("[ScriptName] About to do X:", params)` — shows what's about to happen
+4. **After critical operations**: `Debug.print("[ScriptName] X complete, result:", result)` — confirms success
+5. **On error/edge cases**: `Debug.warn("[ScriptName] Unexpected:", details)` — catches problems early
 
-**Example:**
+**Example — a vehicle controller without logging vs with logging:**
 ```lua
---!strict
-local Players = game:GetService("Players")
-local Debug = require(game.ReplicatedStorage.Debug)
+-- BAD: No Debug.print(). If the car doesn't move, you have ZERO information about why.
+seat.Changed:Connect(function()
+    for _, hinge in hinges do
+        hinge.AngularVelocity = seat.ThrottleFloat * maxSpeed
+    end
+end)
 
-Debug.print("[GameManager] Script initialized")
-
-Players.PlayerAdded:Connect(function(player: Player)
-    Debug.print("[GameManager] Player joined:", player.Name, "total:", #Players:GetPlayers())
-    -- game logic here
+-- GOOD: Full visibility. If the car doesn't move, logs tell you exactly where it failed.
+Debug.print("[VehicleCtrl] Initialized, seat:", seat.Name, "hinges:", #hinges)
+seat.Changed:Connect(function(prop)
+    if prop == "ThrottleFloat" or prop == "SteerFloat" then
+        local throttle = seat.ThrottleFloat
+        local steer = seat.SteerFloat
+        Debug.print("[VehicleCtrl] Input — throttle:", throttle, "steer:", steer)
+        for i, hinge in hinges do
+            hinge.AngularVelocity = -throttle * maxSpeed
+            hinge.MotorMaxTorque = math.abs(throttle) > 0.01 and driveTorque or brakeTorque
+        end
+        Debug.print("[VehicleCtrl] Applied — angVel:", -throttle * maxSpeed, "torque:", driveTorque)
+    end
 end)
 ```
 
 **When to use raw `print()` instead:** Only for output that you intentionally want players to see in production (e.g., admin commands feedback). For all debugging and development logging, always use `Debug.print()`.
 
-Without debug prints, debugging is guesswork. With them, you can read `.roxlit/logs/latest.log` and see exactly what happened.
+**Without debug prints, you are debugging blind. With them, you read `.roxlit/logs/latest.log` and see exactly what happened, what values were used, and where it failed.**
 
 ### Debugging Workflow
 
@@ -722,7 +752,7 @@ This project includes curated Roblox documentation in `.roxlit/context/`. Before
 - `.roxlit/context/datastore.md` — DataStoreService: throttling limits, session locking, retry patterns
 - `.roxlit/context/remote-events.md` — RemoteEvent/Function: server validation, rate limiting, type checking
 - `.roxlit/context/player-lifecycle.md` — PlayerAdded, CharacterAdded, respawn, death handling
-- `.roxlit/context/workspace-physics.md` — Parts, CFrame, raycasting, collision groups, **cylinder orientations, vehicles (VehicleSeat + wheels), Z-fighting**
+- `.roxlit/context/workspace-physics.md` — Parts, CFrame, raycasting, collision groups, **cylinder orientations, vehicles (USE community chassis!), Z-fighting**
 - `.roxlit/context/replication.md` — What replicates, FilteringEnabled, client vs server
 - `.roxlit/context/services-reference.md` — Service properties, enums, valid ranges
 - `.roxlit/context/studio-ui.md` — **READ THIS before giving ANY Studio UI directions**: where panels are (Output, Explorer, etc.), mezzanine/toolbar layout, testing modes (F5/F8), troubleshooting ("my script isn't running")

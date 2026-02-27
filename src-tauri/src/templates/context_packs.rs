@@ -18,7 +18,7 @@ These files contain curated Roblox/Luau documentation to help you write correct 
 | `datastore.md` | DataStoreService: throttling, session locking, retry patterns |
 | `remote-events.md` | RemoteEvent/RemoteFunction: security, validation, rate limiting |
 | `player-lifecycle.md` | PlayerAdded, CharacterAdded, respawn, death, BindToClose |
-| `workspace-physics.md` | Parts, CFrame, terrain, collision groups, physics |
+| `workspace-physics.md` | Parts, CFrame, terrain, collision groups, physics, vehicles (use community chassis first!) |
 | `replication.md` | What replicates, FilteringEnabled rules, RunContext |
 | `services-reference.md` | Service properties, enums, valid ranges |
 | `studio-ui.md` | Studio UI: panel locations, testing modes, localized names, troubleshooting |
@@ -565,80 +565,75 @@ sound.Parent = vehicleSeat
 
 This rule applies to ALL asset types: sounds, images, meshes, animations. Never guess any `rbxassetid://` ID.
 
-## Vehicles (VehicleSeat)
+## Vehicles — Use Existing Community Chassis Systems
 
-Building vehicles requires precise setup. Common mistakes: seat facing wrong way, wheels not spinning, car not moving, player can't sit down.
+**NEVER build a vehicle physics system from scratch.** Vehicle physics in Roblox is extremely complex — suspension, steering, torque balance, stability, wheel friction — and the community has spent YEARS building open-source systems that handle all of this.
 
-### VehicleSeat Orientation
+### Step 1: Search for an Existing Chassis System
 
-VehicleSeat faces **-Z by default** (LookVector points -Z). The front of the vehicle MUST align with the seat's -Z direction.
+Before writing a single line of vehicle code, **search the web** for existing open-source chassis systems:
 
-```luau
--- The seat's LookVector (-Z) = forward direction of the vehicle
--- Make sure the car body is built so -Z is the front
-vehicleSeat.CFrame = CFrame.new(0, 2, 0) -- Faces -Z by default, which is forward
-```
+- Search: `roblox open source vehicle chassis system site:devforum.roblox.com`
+- Search: `roblox A-Chassis tutorial`
+- Search: `roblox free car model with chassis`
 
-### Cabin / Enclosures — CanCollide = false
+**A-Chassis** is the most popular and battle-tested community vehicle system. It handles:
+- Suspension (spring constraints)
+- Steering with proper Ackermann geometry
+- Torque curves and gear ratios
+- Anti-roll, stability
+- Sounds (engine, horn, brakes)
+- Mobile/gamepad input
+- Everything that takes weeks to build from scratch
 
-If the seat is inside an enclosed cabin, the cabin walls MUST have `CanCollide = false`. Otherwise the player's character collides with the cabin and can never reach the seat.
+Other options: Egomoose chassis, community free models on the Toolbox with working physics.
 
-```luau
-cabin.CanCollide = false  -- Player can walk through to sit
-cabin.CanQuery = false     -- Raycasts ignore it too
--- Keep Transparency = 0 so it's still visible
-```
+### Step 2: Tell the User About Licensing
 
-### Wheel Setup — HingeConstraint with Motor
+**Always mention licensing** when recommending community systems:
+- Most Roblox community chassis systems are shared freely on DevForum or Toolbox
+- Check the original post/model for license terms (most are "free to use, credit appreciated")
+- If unclear, tell the user to check the original source before using in a published game
+- NEVER claim a community system is yours — always credit the original creator
 
-Wheels MUST use `HingeConstraint` with `ActuatorType = Motor` to spin. VehicleSeat automatically drives HingeConstraints that are set up correctly.
+### Step 3: Chassis = Base, You Build Everything Else
 
-```luau
--- 1. Create chassis (anchored = false, but one part must be the root)
-local chassis = Instance.new("Part")
-chassis.Name = "Chassis"
-chassis.Anchored = false
+The open-source chassis handles the hard part: making the car **drive** (physics, suspension, steering, torque). Everything else is YOUR job:
 
--- 2. Create wheel (NOT anchored, cylinder shape)
-local wheel = Instance.new("Part")
-wheel.Name = "WheelFL"
-wheel.Shape = Enum.PartType.Cylinder
-wheel.Orientation = Vector3.new(0, 0, 0) -- Correct wheel orientation
-wheel.Anchored = false
-wheel.CustomPhysicalProperties = PhysicalProperties.new(1, 2, 0, 1, 1) -- Good friction
+- **Body/appearance**: build the car body, doors, windows, spoilers with `run_code`
+- **Lights**: headlights, taillights, brake lights, turn signals (PointLight, SpotLight, Neon material)
+- **Sounds**: engine, horn, brakes, wind (Sound instances with proper RollOff)
+- **Tuning**: adjust speed, torque, suspension stiffness, gear ratios in the chassis config
+- **Game-specific features**: weapons, boost/nitro, damage system, fuel, custom UI (speedometer, minimap)
+- **Visual effects**: exhaust particles, tire smoke, speed lines
 
--- 3. Create attachments (connection points)
-local chassisAttach = Instance.new("Attachment")
-chassisAttach.Name = "WheelAttachment"
-chassisAttach.Parent = chassis
-chassisAttach.CFrame = CFrame.new(-3, -1, -4) -- Where the wheel connects
+The chassis is the foundation. The user's vision for THEIR car (semi-realistic, arcade, combat vehicle, etc.) is built on top.
 
-local wheelAttach = Instance.new("Attachment")
-wheelAttach.Name = "WheelAttachment"
-wheelAttach.Parent = wheel
+### Reference: How Roblox Vehicle Physics Work
 
--- 4. HingeConstraint (THIS makes the wheel spin)
-local hinge = Instance.new("HingeConstraint")
-hinge.Attachment0 = chassisAttach
-hinge.Attachment1 = wheelAttach
-hinge.ActuatorType = Enum.ActuatorType.Motor -- REQUIRED for VehicleSeat to drive it
-hinge.Parent = chassis
+This section is for **understanding** existing chassis systems, not for building from scratch.
 
--- 5. VehicleSeat drives all HingeConstraints in the assembly
-local seat = Instance.new("VehicleSeat")
-seat.MaxSpeed = 50
-seat.Torque = 500
-seat.TurnSpeed = 2
-seat.Anchored = false
-seat.Parent = chassis -- Must be in the same assembly
-```
+**VehicleSeat** is ONLY an input provider. It exposes `ThrottleFloat` (-1 to 1) and `SteerFloat` (-1 to 1) from WASD. Its `MaxSpeed`/`Torque`/`TurnSpeed` only auto-drive deprecated legacy surface hinges — NOT modern `HingeConstraint`. `AreHingesDetected = 0` is normal with modern constraints.
 
-**Critical rules:**
-- **ALL parts must be Anchored = false** — anchored parts don't move with physics
-- **Wheels connected via HingeConstraint with ActuatorType = Motor** — VehicleSeat automatically drives these
-- **VehicleSeat must be in the same assembly** (welded/connected to chassis)
-- **Chassis parts welded together** with WeldConstraint — not just touching
-- **Wheels NOT welded to chassis** — only connected via HingeConstraint so they can rotate
+**VehicleSeat orientation**: faces -Z by default (LookVector = -Z). Vehicle front must align with -Z.
+
+**Cabin/enclosures**: walls around the seat MUST have `CanCollide = false` so the player can reach the seat.
+
+**Wheel orientation**: Cylinders have axis along X by default. `Orientation = (0, 0, 0)` is correct for wheels (circular face points sideways).
+
+**HingeConstraint + Motor**: connects wheel to chassis, allows rotation. A script must set `AngularVelocity` and `MotorMaxTorque` — the VehicleSeat does NOT do this automatically.
+
+**AngularVelocity sign**: depends on attachment orientation. If car drives backwards when pressing W, negate the throttle value.
+
+**Torque/weight balance**: `MotorMaxTorque` too high + light chassis = wheelies. Heavy chassis + moderate torque = stable.
+
+**AlignOrientation**: prevents roll on turns and pitch on acceleration. Better than AngularVelocity for steering because it maintains pitch/roll stability.
+
+**Key rules if modifying a chassis:**
+- ALL parts Anchored = false
+- Chassis parts welded with WeldConstraint
+- Wheels NOT welded — only connected via HingeConstraint
+- Log everything with Debug.print() — throttle, angular velocities, torque values
 
 ## CFrame: ALWAYS Use for Positioning Assemblies
 
