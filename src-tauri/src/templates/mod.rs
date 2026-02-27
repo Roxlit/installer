@@ -403,8 +403,8 @@ Tools:
 **CRITICAL — `run_code` rules:**
 - Each `run_code` call is a **separate execution context**. Local variables do NOT persist between calls.
 - To reference instances created in a previous call, use full paths: `workspace:FindFirstChild("Car")`, NOT a local variable from before.
-- For complex multi-instance creation (models, vehicles, GUIs), do it in a **single `run_code` call** with all the code. Do NOT split into multiple calls expecting variables to carry over.
-- If the code is too long for one call, have each call save its work to the DataModel (parent instances to workspace) and the next call finds them by path.
+- For multi-instance creation (models, vehicles, GUIs with 10+ parts), split into logical groups of ~5-10 instances per `run_code` call. Each call should parent its instances to the model so the next call can find them by path.
+- Keep each `run_code` call under ~200 lines. Calls that are too large (>10k tokens) will fail. If you need more, split into multiple calls with each one creating a logical group (e.g., "chassis + body", "wheels", "lights").
 - **NEVER call `:Destroy()` on existing instances to "rebuild from scratch"** unless the user explicitly asks. If something looks wrong, inspect it first — don't delete and redo. Destroying work wastes time and tokens.
 
 **Testing tools — what works and what doesn't:**
