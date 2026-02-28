@@ -11,6 +11,8 @@ pub struct ProjectEntry {
     pub path: String,
     pub ai_tool: String,
     pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -133,4 +135,30 @@ pub async fn save_settings(update_delay_days: u32) -> Result<()> {
     std::fs::write(&path, json)?;
 
     Ok(())
+}
+
+/// Persist a placeId for the given project path in the config file.
+/// Called when stop_rojo flushes the linked placeId from LauncherStatus.
+pub fn save_place_id(project_path: &str, place_id: u64) {
+    let path = match config_path() {
+        Some(p) => p,
+        None => return,
+    };
+
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let mut config: RoxlitConfig = match serde_json::from_str(&content) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    if let Some(project) = config.projects.iter_mut().find(|p| p.path == project_path) {
+        project.place_id = Some(place_id);
+        if let Ok(json) = serde_json::to_string_pretty(&config) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
 }
