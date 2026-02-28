@@ -1,22 +1,25 @@
 # Roxlit
 
-Open-source launcher that connects AI coding tools to Roblox Studio. One click.
+Open-source launcher that gives AI tools direct access to Roblox Studio. Not just file sync — your AI can execute code, create instances, run playtests, and read game state inside Studio.
 
-Works with Claude Code, Cursor, Windsurf, and any AI tool that reads project context files.
+Works with Claude Code, Cursor, Windsurf, and any AI tool that supports MCP or project context files.
 
 <!-- TODO: Add screenshot of the launcher here -->
 <!-- ![Roxlit Launcher](https://raw.githubusercontent.com/Roxlit/installer/main/.github/screenshots/launcher.png) -->
 
 ## What it does
 
-Roxlit automates the entire setup process for AI-powered Roblox development:
+Roxlit connects AI coding tools to Roblox Studio in two ways:
 
-- **Rojo + Aftman** installed and configured (no terminal needed)
-- **MCP server** (via RbxSync) so AI tools can execute Luau in Studio, insert models, and extract games to files
-- **7 AI context packs** that teach your AI how to write correct Luau code
-- **Debug logging** for every installation step
+**File sync (via Rojo)** — AI writes files, Rojo syncs them into Studio in real-time. Scripts, instances, models, properties — everything in your game tree.
 
-After the initial setup, it becomes your daily launcher. One click starts `rojo serve`, opens your editor, and shows live sync logs.
+**Runtime access (via MCP server)** — AI executes Luau code directly inside Studio. Create Parts, build GUIs, run playtests, query the game hierarchy, read properties. The AI isn't blind — it can see and manipulate your game while you build.
+
+Plus:
+- **7 AI context packs** that teach your AI how to write correct Luau code (services, patterns, client-server architecture)
+- **Auto-connect** — Studio plugins connect automatically when you start development, no manual clicking
+- **Studio log capture** — Console output streams to your local session so your AI can read errors
+- **One-click launcher** — Start Rojo, MCP server, and your editor with a single button
 
 ## Download
 
@@ -62,7 +65,7 @@ The AI reads these files automatically and writes code that follows best practic
 | Frontend | React 19, TypeScript, Tailwind CSS v4 |
 | Backend | Rust |
 | File sync | [Rojo](https://rojo.space) |
-| MCP server | [RbxSync](https://github.com/Roxlit/rbxsync) (fork with broken tools disabled) |
+| MCP server | [RbxSync](https://github.com/Roxlit/rbxsync) — AI executes Luau, creates instances, runs playtests |
 | Builds | GitHub Actions (NSIS installer) |
 
 ## Building from source
