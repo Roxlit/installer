@@ -25,3 +25,5 @@ thiserror = "2"
 zip = "2"
 dirs = "6"
 futures-util = "0.3"
+anyhow = "1"
+rbxsync-server = { git = "https://github.com/Roxlit/rbxsync.git" }

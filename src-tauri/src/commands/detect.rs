@@ -116,54 +116,7 @@ async fn detect_cli_tool(name: &str) -> (bool, Option<String>) {
     }
 }
 
-/// Checks for RbxSync in ~/.roxlit/bin/ and PATH.
-/// Skips on Linux where no binaries are available.
-async fn detect_rbxsync(os: &str) -> (bool, Option<String>) {
-    if os == "linux" {
-        return (false, None);
-    }
-
-    let roxlit_bin = dirs::home_dir().map(|h| {
-        let name = if cfg!(target_os = "windows") {
-            "rbxsync.exe"
-        } else {
-            "rbxsync"
-        };
-        h.join(".roxlit").join("bin").join(name)
-    });
-
-    // Try ~/.roxlit/bin/rbxsync first
-    if let Some(ref path) = roxlit_bin {
-        if path.exists() {
-            let mut cmd = Command::new(path);
-            cmd.arg("version");
-            #[cfg(target_os = "windows")]
-            cmd.creation_flags(0x08000000);
-            if let Ok(output) = cmd.output().await {
-                if output.status.success() {
-                    let version = String::from_utf8_lossy(&output.stdout)
-                        .trim()
-                        .to_string();
-                    return (true, Some(version));
-                }
-            }
-            // Binary exists but version failed — still counts as installed
-            return (true, None);
-        }
-    }
-
-    // Fallback to PATH
-    let mut cmd = Command::new("rbxsync");
-    cmd.arg("version");
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000);
-    match cmd.output().await {
-        Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
-            (true, Some(version))
-        }
-        _ => (false, None),
-    }
+/// RbxSync server is now embedded in the Tauri app — always available.
+async fn detect_rbxsync(_os: &str) -> (bool, Option<String>) {
+    (true, Some("Built-in".to_string()))
 }

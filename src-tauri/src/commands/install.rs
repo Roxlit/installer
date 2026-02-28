@@ -553,19 +553,6 @@ async fn download_binary(url: &str, target_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Returns the RbxSync CLI asset name for the current platform.
-fn rbxsync_asset_name() -> Option<&'static str> {
-    if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-        Some("rbxsync-windows-x86_64.exe")
-    } else if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        Some("rbxsync-macos-aarch64")
-    } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
-        Some("rbxsync-macos-x86_64")
-    } else {
-        None // Linux or unsupported arch
-    }
-}
-
 /// Returns the RbxSync MCP server download URL for the current platform.
 /// macOS ARM: from upstream rbxsync releases. Windows: from our Roxlit releases.
 fn rbxsync_mcp_download_url() -> Option<String> {
@@ -582,41 +569,18 @@ fn rbxsync_mcp_download_url() -> Option<String> {
     }
 }
 
-/// Downloads and installs RbxSync CLI, Studio plugin, and MCP server (if available).
+/// Downloads and installs RbxSync Studio plugin and MCP server (if available).
+/// The rbxsync server itself is now embedded in the Tauri app — no CLI binary needed.
 async fn install_rbxsync(config: &InstallConfig, on_event: &Channel<SetupEvent>) -> Result<()> {
-    let asset_name = rbxsync_asset_name().ok_or_else(|| {
-        InstallerError::Custom("RbxSync is not available for this platform".into())
-    })?;
-
     let home = dirs::home_dir()
         .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
     let bin_dir = home.join(".roxlit").join("bin");
 
-    // 1. Download RbxSync CLI
+    // 1. Download RbxSync Studio plugin
     on_event
         .send(SetupEvent::StepProgress {
             step: "rbxsync".into(),
-            progress: 0.1,
-            detail: "Downloading RbxSync CLI...".into(),
-        })
-        .map_err(|e| InstallerError::Custom(e.to_string()))?;
-
-    let cli_url = format!(
-        "https://github.com/{RBXSYNC_REPO}/releases/download/v{RBXSYNC_VERSION}/{asset_name}"
-    );
-    let cli_bin_name = if cfg!(target_os = "windows") {
-        "rbxsync.exe"
-    } else {
-        "rbxsync"
-    };
-    let cli_path = bin_dir.join(cli_bin_name);
-    download_binary(&cli_url, &cli_path).await?;
-
-    // 2. Download RbxSync Studio plugin
-    on_event
-        .send(SetupEvent::StepProgress {
-            step: "rbxsync".into(),
-            progress: 0.5,
+            progress: 0.2,
             detail: "Installing RbxSync Studio plugin...".into(),
         })
         .map_err(|e| InstallerError::Custom(e.to_string()))?;
@@ -644,12 +608,12 @@ async fn install_rbxsync(config: &InstallConfig, on_event: &Channel<SetupEvent>)
     let plugin_path = plugins_path.join("RbxSync.rbxm");
     download_binary(&plugin_url, &plugin_path).await?;
 
-    // 3. Download MCP server (macOS ARM + Windows x64)
+    // 2. Download MCP server (macOS ARM + Windows x64)
     if let Some(mcp_url) = rbxsync_mcp_download_url() {
         on_event
             .send(SetupEvent::StepProgress {
                 step: "rbxsync".into(),
-                progress: 0.8,
+                progress: 0.6,
                 detail: "Installing RbxSync MCP server...".into(),
             })
             .map_err(|e| InstallerError::Custom(e.to_string()))?;
