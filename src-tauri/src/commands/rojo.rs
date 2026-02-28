@@ -55,120 +55,76 @@ impl RojoProcess {
     }
 }
 
-/// Managed state holding the background rbxsync serve process (needed for MCP).
+/// Managed state holding the embedded rbxsync server (needed for MCP).
 ///
-/// This runs silently — no UI, no events. It just needs to be alive on port 44755
-/// so that rbxsync-mcp can send commands to Studio via the rbxsync plugin.
+/// Runs rbxsync-server as a tokio task in-process — no external binary needed.
+/// It just needs to be alive on port 44755 so that rbxsync-mcp can send commands
+/// to Studio via the rbxsync plugin.
 pub struct RbxSyncProcess {
-    child: Arc<Mutex<Option<tokio::process::Child>>>,
+    handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl Default for RbxSyncProcess {
     fn default() -> Self {
         Self {
-            child: Arc::new(Mutex::new(None)),
+            handle: Arc::new(Mutex::new(None)),
         }
     }
 }
 
 impl RbxSyncProcess {
-    /// Kill the process synchronously (for window close handler).
+    /// Kill the server synchronously (for window close handler).
     pub fn kill_sync(&self) {
-        if let Ok(mut guard) = self.child.try_lock() {
-            if let Some(ref mut child) = *guard {
-                let _ = child.start_kill();
+        if let Ok(mut guard) = self.handle.try_lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
             }
-            *guard = None;
         }
     }
 
-    /// Start rbxsync serve silently in the background.
+    /// Start rbxsync server as an embedded tokio task.
     async fn start(&self, project_path: &str, log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) {
         // Already running?
         {
-            let mut guard = self.child.lock().await;
-            if let Some(ref mut child) = *guard {
-                if child.try_wait().ok().flatten().is_none() {
+            let guard = self.handle.lock().await;
+            if let Some(ref handle) = *guard {
+                if !handle.is_finished() {
                     return; // Still running
                 }
             }
-            *guard = None;
         }
 
-        let bin = rbxsync_bin_path();
-        if bin.is_none() {
-            if let Some(tx) = log_tx {
-                send_log(tx, "roxlit", "rbxsync binary not found — MCP tools unavailable");
+        let project_path = project_path.to_string();
+        let log_tx_clone = log_tx.cloned();
+
+        let handle = tokio::spawn(async move {
+            // Set CWD for handle_server_info (the only place rbxsync-server reads CWD)
+            let _ = std::env::set_current_dir(&project_path);
+
+            let config = rbxsync_server::ServerConfig {
+                port: 44755,
+                ..Default::default()
+            };
+
+            if let Some(ref tx) = log_tx_clone {
+                send_log(tx, "roxlit", "rbxsync server started (embedded, port 44755)");
             }
-            return;
-        }
-        let bin = bin.unwrap();
 
-        let mut cmd = tokio::process::Command::new(&bin);
-        cmd.arg("serve")
-            .current_dir(project_path)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-
-        match cmd.spawn() {
-            Ok(mut child) => {
-                // Pipe stdout/stderr to session log (silent, no frontend events)
-                if let Some(tx) = log_tx {
-                    if let Some(stdout) = child.stdout.take() {
-                        let tx_out = tx.clone();
-                        tokio::spawn(async move {
-                            let reader = BufReader::new(stdout);
-                            let mut lines = reader.lines();
-                            while let Ok(Some(line)) = lines.next_line().await {
-                                send_log(&tx_out, "rbxsync", &strip_ansi(&line));
-                            }
-                        });
-                    }
-                    if let Some(stderr) = child.stderr.take() {
-                        let tx_err = tx.clone();
-                        tokio::spawn(async move {
-                            let reader = BufReader::new(stderr);
-                            let mut lines = reader.lines();
-                            while let Ok(Some(line)) = lines.next_line().await {
-                                send_log(&tx_err, "rbxsync-err", &strip_ansi(&line));
-                            }
-                        });
-                    }
-                    send_log(tx, "roxlit", "rbxsync serve started (MCP bridge)");
-                }
-
-                let mut guard = self.child.lock().await;
-                *guard = Some(child);
-            }
-            Err(e) => {
-                if let Some(tx) = log_tx {
-                    send_log(tx, "roxlit", &format!("Failed to start rbxsync serve: {e}"));
+            if let Err(e) = rbxsync_server::run_server(config).await {
+                if let Some(ref tx) = log_tx_clone {
+                    send_log(tx, "roxlit", &format!("rbxsync server error: {e}"));
                 }
             }
-        }
+        });
+
+        *self.handle.lock().await = Some(handle);
     }
 
-    /// Stop the rbxsync serve process.
+    /// Stop the embedded rbxsync server.
     async fn stop(&self) {
-        let mut guard = self.child.lock().await;
-        if let Some(ref mut child) = *guard {
-            let _ = child.kill().await;
+        if let Some(handle) = self.handle.lock().await.take() {
+            handle.abort();
         }
-        *guard = None;
-    }
-}
-
-/// Resolve the rbxsync binary path (~/.roxlit/bin/rbxsync).
-fn rbxsync_bin_path() -> Option<String> {
-    let bin_name = if cfg!(target_os = "windows") { "rbxsync.exe" } else { "rbxsync" };
-    let path = dirs::home_dir()?.join(".roxlit").join("bin").join(bin_name);
-    if path.exists() {
-        Some(path.to_string_lossy().to_string())
-    } else {
-        None
     }
 }
 
@@ -365,7 +321,10 @@ pub async fn start_rojo(
         }
     }
 
-    // Start rbxsync serve silently (needed for MCP tools: run_code, run_test, etc.)
+    // Kill any orphaned rbxsync process from a previous version that used external binary
+    kill_orphaned_rbxsync().await;
+
+    // Start embedded rbxsync server (needed for MCP tools: run_code, run_test, etc.)
     rbxsync_state.start(&project_path, log_sender.as_ref()).await;
 
     let child_arc = state.child.clone();
@@ -838,6 +797,28 @@ fn ensure_debug_plugin() {
     // Write the binary .rbxm plugin
     let plugin_path = plugins_dir.join("RoxlitDebug.rbxm");
     let _ = std::fs::write(&plugin_path, crate::templates::debug_plugin_rbxm());
+}
+
+/// Kill orphaned rbxsync processes from a previous session that may still hold port 44755.
+/// Users upgrading from versions that used the external binary may have a leftover process.
+async fn kill_orphaned_rbxsync() {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = tokio::process::Command::new("taskkill");
+        cmd.args(["/F", "/IM", "rbxsync.exe"])
+            .creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.output().await;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut cmd = tokio::process::Command::new("pkill");
+        cmd.args(["-f", "rbxsync serve"]);
+        let _ = cmd.output().await;
+    }
+
+    // Give the OS time to release the port
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 }
 
 /// Kill orphaned rojo processes from a previous session that may still hold the port.

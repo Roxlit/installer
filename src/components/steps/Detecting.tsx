@@ -62,12 +62,8 @@ export function Detecting({
         },
         {
           label: "RbxSync",
-          status: detection.os === "linux" ? "fail" as const : "pass" as const,
-          detail: detection.os === "linux"
-            ? "Not available on Linux"
-            : detection.rbxsyncInstalled
-              ? detection.rbxsyncVersion ?? "Installed"
-              : "Will be installed",
+          status: "pass" as const,
+          detail: "Built-in",
         },
       ]
     : [

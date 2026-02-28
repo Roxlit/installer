@@ -1,6 +1,6 @@
 [package]
 name = "roxlit"
-version = "0.7.1"
+version = "0.8.0"
 description = "Roxlit — launcher for AI-powered Roblox development"
 authors = ["Roxlit"]
 edition = "2021"
@@ -25,3 +25,5 @@ thiserror = "2"
 zip = "2"
 dirs = "6"
 futures-util = "0.3"
+anyhow = "1"
+rbxsync-server = { git = "https://github.com/Roxlit/rbxsync.git" }
