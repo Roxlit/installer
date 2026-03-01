@@ -864,7 +864,12 @@ async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc:
 
     let place_id = match place_id {
         Some(id) if id > 0 => id,
-        _ => return, // No linked placeId — user opens Studio manually
+        _ => {
+            if let Some(tx) = log_tx {
+                send_log(tx, "roxlit", "No linked placeId — open Studio manually. It will link automatically on first connect.");
+            }
+            return;
+        }
     };
 
     if let Some(tx) = log_tx {
@@ -877,7 +882,7 @@ async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc:
 /// Open Roblox Studio via the roblox-studio: protocol.
 #[allow(unused_variables)]
 async fn open_studio_url(place_id: u64) {
-    let url = format!("roblox-studio:open?placeId={place_id}");
+    let url = format!("roblox-studio:1+launchmode:edit+task:EditPlace+placeId:{place_id}");
 
     #[cfg(target_os = "windows")]
     {
