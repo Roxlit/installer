@@ -111,6 +111,18 @@ pub fn run() {
         ])
         .on_window_event(|_window, event| {
             if let tauri::WindowEvent::Destroyed = event {
+                // Persist linked placeId before shutdown (so next Start Development opens Studio)
+                if let Some(state) = _window.try_state::<commands::logs::LauncherStatus>() {
+                    let shared = state.inner().shared();
+                    let save_info = shared.try_lock().ok().and_then(|guard| {
+                        let place_id = guard.linked_place_id?;
+                        let path = if guard.project_path.is_empty() { return None } else { guard.project_path.clone() };
+                        Some((path, place_id, guard.linked_universe_id))
+                    });
+                    if let Some((path, place_id, universe_id)) = save_info {
+                        commands::config::save_place_id(&path, place_id, universe_id);
+                    }
+                }
                 // Kill rojo serve when the window is closed
                 if let Some(state) = _window.try_state::<commands::rojo::RojoProcess>() {
                     state.inner().kill_sync();
