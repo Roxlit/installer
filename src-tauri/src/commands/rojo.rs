@@ -285,26 +285,6 @@ pub async fn start_rojo(
         }
     }
 
-    let mut cmd = tokio::process::Command::new(&rojo);
-    cmd.arg("serve")
-        .current_dir(&project_path)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    let mut child = cmd.spawn()
-        .map_err(|e| InstallerError::Custom(format!("Failed to start rojo: {e}")))?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-
-    // Store the child process
-    {
-        let mut guard = state.child.lock().await;
-        *guard = Some(child);
-    }
-
     // Initialize session logger (creates .roxlit/logs/, rotates previous log)
     let log_sender = {
         let mut guard = logger_state.logger.lock().await;
@@ -339,15 +319,37 @@ pub async fn start_rojo(
     // Auto-open Studio if a placeId is linked to this project
     auto_open_studio(&project_path, log_sender.as_ref()).await;
 
+    // Start rojo serve
+    let mut cmd = tokio::process::Command::new(&rojo);
+    cmd.arg("serve")
+        .current_dir(&project_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+    let mut child = cmd.spawn().map_err(|e| {
+        InstallerError::Custom(format!("Failed to start rojo: {e}"))
+    })?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // Store the child process
+    {
+        let mut guard = state.child.lock().await;
+        *guard = Some(child);
+    }
+
     let child_arc = state.child.clone();
     let event_clone = on_event.clone();
 
-    // Spawn a task to read stdout + stderr and stream events
+    // Read stdout and stream events
     let stdout_log_tx = log_sender.clone();
     let reader_handle = tokio::spawn(async move {
         let mut port_detected = false;
 
-        // Read stdout
         if let Some(stdout) = stdout {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -359,7 +361,6 @@ pub async fn start_rojo(
                         if let Some(ref tx) = stdout_log_tx {
                             send_log(tx, "rojo", &line);
                         }
-                        // Try to detect the port from rojo output
                         if !port_detected {
                             if let Some(port) = parse_rojo_port(&line) {
                                 port_detected = true;
@@ -371,13 +372,12 @@ pub async fn start_rojo(
                             stream: "stdout".into(),
                         });
                     }
-                    Ok(None) => break, // EOF
+                    Ok(None) => break,
                     Err(_) => break,
                 }
             }
         }
 
-        // Process has exited, get the exit code
         let code = {
             let mut guard = child_arc.lock().await;
             if let Some(ref mut child) = *guard {
@@ -387,7 +387,6 @@ pub async fn start_rojo(
             }
         };
 
-        // Clean up
         {
             let mut guard = child_arc.lock().await;
             *guard = None;
@@ -396,8 +395,8 @@ pub async fn start_rojo(
         let _ = event_clone.send(RojoEvent::Stopped { code });
     });
 
-    // Also spawn a stderr reader
-    let event_stderr = on_event.clone();
+    // Stderr reader
+    let event_stderr = on_event;
     let stderr_log_tx = log_sender;
     if let Some(stderr) = stderr {
         tokio::spawn(async move {
@@ -416,7 +415,7 @@ pub async fn start_rojo(
         });
     }
 
-    // Store the abort handle
+    // Store abort handle
     {
         let mut guard = state.abort_handle.lock().await;
         *guard = Some(reader_handle);
