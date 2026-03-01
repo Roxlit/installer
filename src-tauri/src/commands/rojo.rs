@@ -319,11 +319,7 @@ pub async fn start_rojo(
     // Auto-open Studio if a placeId is linked to this project
     auto_open_studio(&project_path, log_sender.as_ref()).await;
 
-    // Wait for the Studio plugin to complete a pre-sync backup before starting Rojo.
-    // This prevents Rojo from overwriting Studio content before the backup is saved.
-    wait_for_backup_done(&launcher_status, log_sender.as_ref()).await;
-
-    // NOW start rojo serve — the backup is complete (or timed out)
+    // Start rojo serve
     let mut cmd = tokio::process::Command::new(&rojo);
     cmd.arg("serve")
         .current_dir(&project_path)
@@ -332,8 +328,10 @@ pub async fn start_rojo(
         .kill_on_drop(true);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    let mut child = cmd.spawn()
-        .map_err(|e| InstallerError::Custom(format!("Failed to start rojo: {e}")))?;
+
+    let mut child = cmd.spawn().map_err(|e| {
+        InstallerError::Custom(format!("Failed to start rojo: {e}"))
+    })?;
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -347,12 +345,11 @@ pub async fn start_rojo(
     let child_arc = state.child.clone();
     let event_clone = on_event.clone();
 
-    // Spawn a task to read stdout + stderr and stream events
+    // Read stdout and stream events
     let stdout_log_tx = log_sender.clone();
     let reader_handle = tokio::spawn(async move {
         let mut port_detected = false;
 
-        // Read stdout
         if let Some(stdout) = stdout {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -364,7 +361,6 @@ pub async fn start_rojo(
                         if let Some(ref tx) = stdout_log_tx {
                             send_log(tx, "rojo", &line);
                         }
-                        // Try to detect the port from rojo output
                         if !port_detected {
                             if let Some(port) = parse_rojo_port(&line) {
                                 port_detected = true;
@@ -376,13 +372,12 @@ pub async fn start_rojo(
                             stream: "stdout".into(),
                         });
                     }
-                    Ok(None) => break, // EOF
+                    Ok(None) => break,
                     Err(_) => break,
                 }
             }
         }
 
-        // Process has exited, get the exit code
         let code = {
             let mut guard = child_arc.lock().await;
             if let Some(ref mut child) = *guard {
@@ -392,7 +387,6 @@ pub async fn start_rojo(
             }
         };
 
-        // Clean up
         {
             let mut guard = child_arc.lock().await;
             *guard = None;
@@ -401,8 +395,8 @@ pub async fn start_rojo(
         let _ = event_clone.send(RojoEvent::Stopped { code });
     });
 
-    // Also spawn a stderr reader
-    let event_stderr = on_event.clone();
+    // Stderr reader
+    let event_stderr = on_event;
     let stderr_log_tx = log_sender;
     if let Some(stderr) = stderr {
         tokio::spawn(async move {
@@ -421,7 +415,7 @@ pub async fn start_rojo(
         });
     }
 
-    // Store the abort handle
+    // Store abort handle
     {
         let mut guard = state.abort_handle.lock().await;
         *guard = Some(reader_handle);
@@ -854,42 +848,6 @@ async fn kill_orphaned_rbxsync() {
 
     // Give the OS time to release the port
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-}
-
-/// Wait for the Studio plugin to report that its pre-sync backup is complete.
-/// Times out after 60 seconds to avoid blocking indefinitely (e.g. if Studio isn't open).
-async fn wait_for_backup_done(
-    launcher_status: &LauncherStatus,
-    log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>,
-) {
-    if let Some(tx) = log_tx {
-        send_log(tx, "roxlit", "Waiting for Studio plugin to complete backup before starting Rojo...");
-    }
-
-    let shared = launcher_status.shared();
-    let timeout = std::time::Duration::from_secs(60);
-    let start = std::time::Instant::now();
-
-    loop {
-        {
-            let guard = shared.lock().await;
-            if guard.backup_done {
-                if let Some(tx) = log_tx {
-                    send_log(tx, "roxlit", "Backup complete — starting Rojo serve");
-                }
-                return;
-            }
-        }
-
-        if start.elapsed() >= timeout {
-            if let Some(tx) = log_tx {
-                send_log(tx, "roxlit", "Backup timeout (60s) — starting Rojo serve anyway");
-            }
-            return;
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
 }
 
 /// Auto-open Roblox Studio if the project has a linked placeId.

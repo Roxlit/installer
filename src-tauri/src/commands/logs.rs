@@ -16,8 +16,6 @@ pub(crate) struct LauncherStatusInner {
     pub(crate) linked_place_id: Option<u64>,
     pub(crate) linked_universe_id: Option<u64>,
     pub(crate) linked_place_name: Option<String>,
-    /// Set to true when the Studio plugin has completed its pre-sync backup extraction.
-    pub(crate) backup_done: bool,
 }
 
 impl Default for LauncherStatus {
@@ -30,7 +28,6 @@ impl Default for LauncherStatus {
                 linked_place_id: None,
                 linked_universe_id: None,
                 linked_place_name: None,
-                backup_done: false,
             })),
         }
     }
@@ -44,7 +41,6 @@ impl LauncherStatus {
         guard.active = true;
         guard.project_path = project_path.to_string();
         guard.project_name = project_name.to_string();
-        guard.backup_done = false;
 
         // Load placeId from config so the plugin can verify before connecting
         if let Some(config) = crate::commands::config::load_config().await {
@@ -362,15 +358,6 @@ async fn handle_connection(
                 }
             }
         }
-        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
-        let _ = stream.write_all(response.as_bytes()).await;
-        return;
-    }
-
-    if first_line.starts_with("POST /backup-done") {
-        let mut guard = status.lock().await;
-        guard.backup_done = true;
-        send_log(&tx, "roxlit", "Plugin reported backup complete");
         let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
         let _ = stream.write_all(response.as_bytes()).await;
         return;
