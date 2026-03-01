@@ -2,6 +2,58 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex};
 
+/// Shared state exposed to the Studio plugin via HTTP on port 19556.
+/// Updated by start_rojo/stop_rojo to reflect whether "Start Development" is active.
+pub struct LauncherStatus {
+    inner: Arc<Mutex<LauncherStatusInner>>,
+}
+
+pub(crate) struct LauncherStatusInner {
+    pub(crate) active: bool,
+    pub(crate) project_path: String,
+    pub(crate) project_name: String,
+    /// placeId linked to the current project (set by the Studio plugin via POST /link-place)
+    pub(crate) linked_place_id: Option<u64>,
+    pub(crate) linked_universe_id: Option<u64>,
+    pub(crate) linked_place_name: Option<String>,
+}
+
+impl Default for LauncherStatus {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(LauncherStatusInner {
+                active: false,
+                project_path: String::new(),
+                project_name: String::new(),
+                linked_place_id: None,
+                linked_universe_id: None,
+                linked_place_name: None,
+            })),
+        }
+    }
+}
+
+impl LauncherStatus {
+    /// Mark the launcher as active with the given project info.
+    pub async fn set_active(&self, project_path: &str, project_name: &str) {
+        let mut guard = self.inner.lock().await;
+        guard.active = true;
+        guard.project_path = project_path.to_string();
+        guard.project_name = project_name.to_string();
+    }
+
+    /// Mark the launcher as inactive.
+    pub async fn set_inactive(&self) {
+        let mut guard = self.inner.lock().await;
+        guard.active = false;
+    }
+
+    /// Get a clone of the inner Arc for passing to the log server.
+    pub fn shared(&self) -> Arc<Mutex<LauncherStatusInner>> {
+        self.inner.clone()
+    }
+}
+
 /// Managed Tauri state holding the current session logger (if any).
 pub struct LoggerState {
     pub logger: Arc<Mutex<Option<SessionLogger>>>,
@@ -205,11 +257,14 @@ impl LogServerState {
 /// Start the HTTP log server on 127.0.0.1:19556.
 ///
 /// Returns `Some(JoinHandle)` on success, `None` if the port is busy (non-critical).
-/// The server accepts two endpoints:
+/// The server accepts these endpoints:
 /// - `GET /health` → responds `200 ok`
+/// - `GET /status` → JSON with launcher active state, project info
 /// - `POST /log` → parses a JSON batch of `{message, level, timestamp}` and writes to the session log
+/// - `POST /link-place` → receives `{placeId, placeName}` from Studio plugin
 pub async fn start_log_server(
     log_tx: mpsc::UnboundedSender<String>,
+    status: Arc<Mutex<LauncherStatusInner>>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let listener = TcpListener::bind("127.0.0.1:19556").await.ok()?;
 
@@ -221,8 +276,9 @@ pub async fn start_log_server(
             };
 
             let tx = log_tx.clone();
+            let status = status.clone();
             tokio::spawn(async move {
-                handle_connection(stream, tx).await;
+                handle_connection(stream, tx, status).await;
             });
         }
     });
@@ -234,6 +290,7 @@ pub async fn start_log_server(
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     tx: mpsc::UnboundedSender<String>,
+    status: Arc<Mutex<LauncherStatusInner>>,
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -249,6 +306,44 @@ async fn handle_connection(
     let first_line = request.lines().next().unwrap_or("");
 
     if first_line.starts_with("GET /health") {
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    if first_line.starts_with("GET /status") {
+        let guard = status.lock().await;
+        let json = format!(
+            r#"{{"active":{},"projectPath":"{}","projectName":"{}"}}"#,
+            guard.active,
+            guard.project_path.replace('\\', "\\\\").replace('"', "\\\""),
+            guard.project_name.replace('"', "\\\""),
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
+            json.len(),
+            json,
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    if first_line.starts_with("POST /link-place") {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            let body = &request[body_start + 4..];
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                let place_id = val["placeId"].as_u64();
+                let universe_id = val["universeId"].as_u64();
+                let place_name = val["placeName"].as_str().map(String::from);
+                let mut guard = status.lock().await;
+                guard.linked_place_id = place_id;
+                guard.linked_universe_id = universe_id;
+                guard.linked_place_name = place_name;
+                if let Some(id) = place_id {
+                    send_log(&tx, "roxlit", &format!("Studio linked placeId {id}"));
+                }
+            }
+        }
         let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
         let _ = stream.write_all(response.as_bytes()).await;
         return;

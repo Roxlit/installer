@@ -118,6 +118,8 @@ export interface ProjectEntry {
   path: string;
   aiTool: string;
   createdAt: string;
+  placeId?: number | null;
+  universeId?: number | null;
 }
 
 export interface RoxlitConfig {

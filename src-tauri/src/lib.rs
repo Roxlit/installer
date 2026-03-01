@@ -94,6 +94,7 @@ pub fn run() {
         .manage(commands::rojo::RbxSyncProcess::default())
         .manage(commands::logs::LoggerState::default())
         .manage(commands::logs::LogServerState::default())
+        .manage(commands::logs::LauncherStatus::default())
         .invoke_handler(tauri::generate_handler![
             commands::detect::detect_environment,
             commands::install::run_installation,

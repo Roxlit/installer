@@ -4,7 +4,7 @@ use tauri::ipc::Channel;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
-use crate::commands::logs::{send_log, LogServerState, LoggerState, SessionLogger};
+use crate::commands::logs::{send_log, LauncherStatus, LogServerState, LoggerState, SessionLogger};
 use crate::error::{InstallerError, Result};
 use crate::util::expand_tilde;
 
@@ -153,6 +153,7 @@ pub async fn start_rojo(
     rbxsync_state: tauri::State<'_, RbxSyncProcess>,
     logger_state: tauri::State<'_, LoggerState>,
     log_server_state: tauri::State<'_, LogServerState>,
+    launcher_status: tauri::State<'_, LauncherStatus>,
 ) -> Result<()> {
     // Check if already running
     {
@@ -257,8 +258,8 @@ pub async fn start_rojo(
     // Ensure MCP binary exists (download if missing)
     ensure_mcp_binary().await;
 
-    // Ensure debug plugin is installed in Studio
-    ensure_debug_plugin();
+    // Ensure unified Roxlit plugin is installed in Studio
+    ensure_roxlit_plugin();
 
     // Ensure AI context file exists (or regenerate if stale)
     ensure_ai_context(project_dir, &project_path);
@@ -313,9 +314,17 @@ pub async fn start_rojo(
         guard.as_ref().map(|l| l.sender())
     };
 
-    // Start the HTTP log server for Studio output capture
+    // Mark launcher as active so the Studio plugin can auto-connect
+    let project_name = std::path::Path::new(&project_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project");
+    launcher_status.set_active(&project_path, project_name).await;
+
+    // Start the HTTP log server for Studio output capture + /status endpoint
     if let Some(ref tx) = log_sender {
-        if let Some(handle) = crate::commands::logs::start_log_server(tx.clone()).await {
+        let shared_status = launcher_status.shared();
+        if let Some(handle) = crate::commands::logs::start_log_server(tx.clone(), shared_status).await {
             log_server_state.set_handle(handle).await;
             send_log(tx, "roxlit", "Studio log server started on 127.0.0.1:19556");
         }
@@ -326,6 +335,9 @@ pub async fn start_rojo(
 
     // Start embedded rbxsync server (needed for MCP tools: run_code, run_test, etc.)
     rbxsync_state.start(&project_path, log_sender.as_ref()).await;
+
+    // Auto-open Studio if a placeId is linked to this project
+    auto_open_studio(&project_path, log_sender.as_ref()).await;
 
     let child_arc = state.child.clone();
     let event_clone = on_event.clone();
@@ -419,7 +431,26 @@ pub async fn stop_rojo(
     state: tauri::State<'_, RojoProcess>,
     rbxsync_state: tauri::State<'_, RbxSyncProcess>,
     log_server_state: tauri::State<'_, LogServerState>,
+    launcher_status: tauri::State<'_, LauncherStatus>,
 ) -> Result<()> {
+    // Persist linked placeId + universeId to config before shutting down
+    {
+        let shared = launcher_status.shared();
+        let guard = shared.lock().await;
+        if let Some(place_id) = guard.linked_place_id {
+            if !guard.project_path.is_empty() {
+                crate::commands::config::save_place_id(
+                    &guard.project_path,
+                    place_id,
+                    guard.linked_universe_id,
+                );
+            }
+        }
+    }
+
+    // Mark launcher as inactive so the Studio plugin stops auto-connecting
+    launcher_status.set_inactive().await;
+
     // Kill the child process
     {
         let mut guard = state.child.lock().await;
@@ -766,13 +797,14 @@ fn ensure_debug_module(project_dir: &std::path::Path) {
     }
 }
 
-/// Ensure the RoxlitDebug Studio plugin is installed and up to date.
+/// Ensure the unified Roxlit Studio plugin is installed.
 ///
-/// Writes `RoxlitDebug.rbxm` (binary format) to the Studio local plugins folder.
-/// Always overwrites — the file is small and version checking binary content is complex.
-/// Also cleans up the old `.rbxmx` file if it exists.
+/// Checks if `Roxlit.rbxm` exists in the Studio plugins folder. If not, it was
+/// either never installed or was deleted — the installer downloads it during setup,
+/// and this function just verifies it's present.
+/// Also cleans up old plugins (RoxlitDebug, RbxSync) that the unified plugin replaces.
 /// Non-critical — silently ignores errors.
-fn ensure_debug_plugin() {
+fn ensure_roxlit_plugin() {
     let plugins_dir = if cfg!(target_os = "windows") {
         dirs::data_local_dir().map(|d| d.join("Roblox").join("Plugins"))
     } else if cfg!(target_os = "macos") {
@@ -788,15 +820,13 @@ fn ensure_debug_plugin() {
 
     let _ = std::fs::create_dir_all(&plugins_dir);
 
-    // Clean up old .rbxmx version (Studio doesn't load XML plugins)
-    let old_xml = plugins_dir.join("RoxlitDebug.rbxmx");
-    if old_xml.exists() {
-        let _ = std::fs::remove_file(&old_xml);
+    // Clean up old plugins that the unified Roxlit plugin replaces
+    for old_name in &["RoxlitDebug.rbxm", "RoxlitDebug.rbxmx", "RbxSync.rbxm"] {
+        let old_path = plugins_dir.join(old_name);
+        if old_path.exists() {
+            let _ = std::fs::remove_file(&old_path);
+        }
     }
-
-    // Write the binary .rbxm plugin
-    let plugin_path = plugins_dir.join("RoxlitDebug.rbxm");
-    let _ = std::fs::write(&plugin_path, crate::templates::debug_plugin_rbxm());
 }
 
 /// Kill orphaned rbxsync processes from a previous session that may still hold port 44755.
@@ -819,6 +849,62 @@ async fn kill_orphaned_rbxsync() {
 
     // Give the OS time to release the port
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+}
+
+/// Auto-open Roblox Studio if the project has a linked placeId.
+/// Uses the `roblox-studio:` protocol to open the correct experience.
+async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) {
+    // Read the config to find the placeId/universeId for this project
+    let config = match crate::commands::config::load_config().await {
+        Some(c) => c,
+        None => return,
+    };
+
+    let project = config.projects.iter().find(|p| p.path == project_path);
+
+    let place_id = project.and_then(|p| p.place_id);
+    let universe_id = project.and_then(|p| p.universe_id);
+
+    let place_id = match place_id {
+        Some(id) if id > 0 => id,
+        _ => {
+            if let Some(tx) = log_tx {
+                send_log(tx, "roxlit", "No linked placeId — open Studio manually. It will link automatically on first connect.");
+            }
+            return;
+        }
+    };
+
+    if let Some(tx) = log_tx {
+        send_log(tx, "roxlit", &format!("Opening Studio for placeId {place_id}..."));
+    }
+
+    open_studio_url(place_id, universe_id.unwrap_or(0)).await;
+}
+
+/// Open Roblox Studio for a specific place via the roblox-studio: protocol.
+/// Uses PowerShell on Windows because cmd.exe and rundll32 split URLs at `+` delimiters.
+#[allow(unused_variables)]
+async fn open_studio_url(place_id: u64, universe_id: u64) {
+    let url = format!(
+        "roblox-studio:1+launchmode:edit+task:EditPlace+placeId:{place_id}+universeId:{universe_id}"
+    );
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = tokio::process::Command::new("powershell.exe");
+        cmd.args(["-NoProfile", "-Command", &format!("Start-Process '{url}'")]);
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.output().await;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = tokio::process::Command::new("open")
+            .arg(&url)
+            .output()
+            .await;
+    }
 }
 
 /// Kill orphaned rojo processes from a previous session that may still hold the port.

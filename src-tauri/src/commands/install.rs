@@ -193,9 +193,6 @@ pub async fn run_installation(
         }
     }
 
-    // Step 4b: Install RoxlitDebug plugin (non-critical, no extra step count)
-    install_debug_plugin(&config, &on_event);
-
     // Step 5: Create project structure
     step_index += 1;
     on_event
@@ -576,18 +573,16 @@ async fn install_rbxsync(config: &InstallConfig, on_event: &Channel<SetupEvent>)
         .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
     let bin_dir = home.join(".roxlit").join("bin");
 
-    // 1. Download RbxSync Studio plugin
+    // 1. Download unified Roxlit Studio plugin (replaces RbxSync + RoxlitDebug)
     on_event
         .send(SetupEvent::StepProgress {
             step: "rbxsync".into(),
             progress: 0.2,
-            detail: "Installing RbxSync Studio plugin...".into(),
+            detail: "Installing Roxlit Studio plugin...".into(),
         })
         .map_err(|e| InstallerError::Custom(e.to_string()))?;
 
-    let plugin_url = format!(
-        "https://github.com/{RBXSYNC_REPO}/releases/download/v{RBXSYNC_VERSION}/RbxSync.rbxm"
-    );
+    let plugin_url = "https://github.com/Roxlit/installer/releases/latest/download/Roxlit.rbxm";
 
     let plugins_path = match &config.plugins_path {
         Some(path) => PathBuf::from(path),
@@ -605,8 +600,13 @@ async fn install_rbxsync(config: &InstallConfig, on_event: &Channel<SetupEvent>)
         }
     };
     std::fs::create_dir_all(&plugins_path)?;
-    let plugin_path = plugins_path.join("RbxSync.rbxm");
-    download_binary(&plugin_url, &plugin_path).await?;
+    let plugin_path = plugins_path.join("Roxlit.rbxm");
+    download_binary(plugin_url, &plugin_path).await?;
+
+    // Clean up old plugins that the unified Roxlit plugin replaces
+    let _ = std::fs::remove_file(plugins_path.join("RbxSync.rbxm"));
+    let _ = std::fs::remove_file(plugins_path.join("RoxlitDebug.rbxm"));
+    let _ = std::fs::remove_file(plugins_path.join("RoxlitDebug.rbxmx"));
 
     // 2. Download MCP server (macOS ARM + Windows x64)
     if let Some(mcp_url) = rbxsync_mcp_download_url() {
@@ -707,44 +707,3 @@ async fn kill_process_by_name(name: &str) {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 }
 
-/// Install the RoxlitDebug Studio plugin for capturing Studio output.
-/// Non-critical — emits a warning and continues if it fails.
-fn install_debug_plugin(config: &InstallConfig, on_event: &Channel<SetupEvent>) {
-    let plugins_dir = match &config.plugins_path {
-        Some(path) => PathBuf::from(path),
-        None => {
-            if cfg!(target_os = "windows") {
-                match dirs::data_local_dir() {
-                    Some(d) => d.join("Roblox").join("Plugins"),
-                    None => return,
-                }
-            } else if cfg!(target_os = "macos") {
-                match dirs::home_dir() {
-                    Some(d) => d.join("Library").join("Roblox").join("Plugins"),
-                    None => return,
-                }
-            } else {
-                return;
-            }
-        }
-    };
-
-    if std::fs::create_dir_all(&plugins_dir).is_err() {
-        let _ = on_event.send(SetupEvent::StepWarning {
-            step: "plugin".into(),
-            message: "Could not create plugins directory for RoxlitDebug".into(),
-        });
-        return;
-    }
-
-    let plugin_path = plugins_dir.join("RoxlitDebug.rbxm");
-    match std::fs::write(&plugin_path, crate::templates::debug_plugin_rbxm()) {
-        Ok(_) => {}
-        Err(e) => {
-            let _ = on_event.send(SetupEvent::StepWarning {
-                step: "plugin".into(),
-                message: format!("Could not install RoxlitDebug plugin: {e}"),
-            });
-        }
-    }
-}
