@@ -3,8 +3,10 @@ name: Build Roxlit
 on:
   push:
     branches: [dev]
-  pull_request:
-    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".github/**"
   workflow_dispatch:
 
 jobs:

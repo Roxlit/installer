@@ -5,7 +5,6 @@ pub fn project_json(project_name: &str) -> String {
     format!(
         r#"{{
   "name": "{project_name}",
-  "globIgnorePaths": ["**/*.rbxjson"],
   "tree": {{
     "$className": "DataModel",
     "ServerScriptService": {{
