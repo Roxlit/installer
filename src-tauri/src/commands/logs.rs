@@ -16,6 +16,8 @@ pub(crate) struct LauncherStatusInner {
     pub(crate) linked_place_id: Option<u64>,
     pub(crate) linked_universe_id: Option<u64>,
     pub(crate) linked_place_name: Option<String>,
+    /// Set to true when the Studio plugin has completed its pre-sync backup extraction.
+    pub(crate) backup_done: bool,
 }
 
 impl Default for LauncherStatus {
@@ -28,6 +30,7 @@ impl Default for LauncherStatus {
                 linked_place_id: None,
                 linked_universe_id: None,
                 linked_place_name: None,
+                backup_done: false,
             })),
         }
     }
@@ -35,11 +38,21 @@ impl Default for LauncherStatus {
 
 impl LauncherStatus {
     /// Mark the launcher as active with the given project info.
+    /// Also loads the previously linked placeId from config for the /status endpoint.
     pub async fn set_active(&self, project_path: &str, project_name: &str) {
         let mut guard = self.inner.lock().await;
         guard.active = true;
         guard.project_path = project_path.to_string();
         guard.project_name = project_name.to_string();
+        guard.backup_done = false;
+
+        // Load placeId from config so the plugin can verify before connecting
+        if let Some(config) = crate::commands::config::load_config().await {
+            if let Some(project) = config.projects.iter().find(|p| p.path == project_path) {
+                guard.linked_place_id = project.place_id;
+                guard.linked_universe_id = project.universe_id;
+            }
+        }
     }
 
     /// Mark the launcher as inactive.
@@ -313,11 +326,16 @@ async fn handle_connection(
 
     if first_line.starts_with("GET /status") {
         let guard = status.lock().await;
+        let linked_place = match guard.linked_place_id {
+            Some(id) => format!("{id}"),
+            None => "null".to_string(),
+        };
         let json = format!(
-            r#"{{"active":{},"projectPath":"{}","projectName":"{}"}}"#,
+            r#"{{"active":{},"projectPath":"{}","projectName":"{}","linkedPlaceId":{}}}"#,
             guard.active,
             guard.project_path.replace('\\', "\\\\").replace('"', "\\\""),
             guard.project_name.replace('"', "\\\""),
+            linked_place,
         );
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
@@ -344,6 +362,15 @@ async fn handle_connection(
                 }
             }
         }
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    if first_line.starts_with("POST /backup-done") {
+        let mut guard = status.lock().await;
+        guard.backup_done = true;
+        send_log(&tx, "roxlit", "Plugin reported backup complete");
         let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
         let _ = stream.write_all(response.as_bytes()).await;
         return;
