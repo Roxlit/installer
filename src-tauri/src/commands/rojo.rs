@@ -879,15 +879,16 @@ async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc:
     open_studio_url(place_id).await;
 }
 
-/// Open Roblox Studio via the roblox-studio: protocol.
+/// Open Roblox Studio for a specific place via the roblox-studio: protocol.
+/// Uses rundll32 on Windows to avoid cmd.exe parsing issues with + delimiters.
 #[allow(unused_variables)]
 async fn open_studio_url(place_id: u64) {
     let url = format!("roblox-studio:1+launchmode:edit+task:EditPlace+placeId:{place_id}");
 
     #[cfg(target_os = "windows")]
     {
-        let mut cmd = tokio::process::Command::new("cmd.exe");
-        cmd.args(["/c", "start", "", &url]);
+        let mut cmd = tokio::process::Command::new("rundll32.exe");
+        cmd.args(["url.dll,FileProtocolHandler", &url]);
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         let _ = cmd.output().await;
     }
