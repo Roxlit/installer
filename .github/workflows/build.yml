@@ -3,6 +3,10 @@ name: Build Roxlit
 on:
   push:
     branches: [dev]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".github/workflows/codeql.yml"
   workflow_dispatch:
 
 jobs:
