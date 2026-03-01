@@ -6,7 +6,7 @@ on:
     paths-ignore:
       - "**.md"
       - "LICENSE"
-      - ".github/workflows/codeql.yml"
+      - ".github/**"
   workflow_dispatch:
 
 jobs:
