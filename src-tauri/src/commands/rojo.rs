@@ -433,13 +433,17 @@ pub async fn stop_rojo(
     log_server_state: tauri::State<'_, LogServerState>,
     launcher_status: tauri::State<'_, LauncherStatus>,
 ) -> Result<()> {
-    // Persist linked placeId to config before shutting down
+    // Persist linked placeId + universeId to config before shutting down
     {
         let shared = launcher_status.shared();
         let guard = shared.lock().await;
         if let Some(place_id) = guard.linked_place_id {
             if !guard.project_path.is_empty() {
-                crate::commands::config::save_place_id(&guard.project_path, place_id);
+                crate::commands::config::save_place_id(
+                    &guard.project_path,
+                    place_id,
+                    guard.linked_universe_id,
+                );
             }
         }
     }
@@ -848,19 +852,18 @@ async fn kill_orphaned_rbxsync() {
 }
 
 /// Auto-open Roblox Studio if the project has a linked placeId.
-/// Uses the `roblox-studio:open?placeId=X` protocol to open the correct experience.
+/// Uses the `roblox-studio:` protocol to open the correct experience.
 async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) {
-    // Read the config to find the placeId for this project
+    // Read the config to find the placeId/universeId for this project
     let config = match crate::commands::config::load_config().await {
         Some(c) => c,
         None => return,
     };
 
-    let place_id = config
-        .projects
-        .iter()
-        .find(|p| p.path == project_path)
-        .and_then(|p| p.place_id);
+    let project = config.projects.iter().find(|p| p.path == project_path);
+
+    let place_id = project.and_then(|p| p.place_id);
+    let universe_id = project.and_then(|p| p.universe_id);
 
     let place_id = match place_id {
         Some(id) if id > 0 => id,
@@ -876,19 +879,21 @@ async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc:
         send_log(tx, "roxlit", &format!("Opening Studio for placeId {place_id}..."));
     }
 
-    open_studio_url(place_id).await;
+    open_studio_url(place_id, universe_id.unwrap_or(0)).await;
 }
 
 /// Open Roblox Studio for a specific place via the roblox-studio: protocol.
-/// Uses rundll32 on Windows to avoid cmd.exe parsing issues with + delimiters.
+/// Uses PowerShell on Windows because cmd.exe and rundll32 split URLs at `+` delimiters.
 #[allow(unused_variables)]
-async fn open_studio_url(place_id: u64) {
-    let url = format!("roblox-studio:1+launchmode:edit+task:EditPlace+placeId:{place_id}");
+async fn open_studio_url(place_id: u64, universe_id: u64) {
+    let url = format!(
+        "roblox-studio:1+launchmode:edit+task:EditPlace+placeId:{place_id}+universeId:{universe_id}"
+    );
 
     #[cfg(target_os = "windows")]
     {
-        let mut cmd = tokio::process::Command::new("rundll32.exe");
-        cmd.args(["url.dll,FileProtocolHandler", &url]);
+        let mut cmd = tokio::process::Command::new("powershell.exe");
+        cmd.args(["-NoProfile", "-Command", &format!("Start-Process '{url}'")]);
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         let _ = cmd.output().await;
     }

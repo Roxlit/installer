@@ -14,6 +14,7 @@ pub(crate) struct LauncherStatusInner {
     pub(crate) project_name: String,
     /// placeId linked to the current project (set by the Studio plugin via POST /link-place)
     pub(crate) linked_place_id: Option<u64>,
+    pub(crate) linked_universe_id: Option<u64>,
     pub(crate) linked_place_name: Option<String>,
 }
 
@@ -25,6 +26,7 @@ impl Default for LauncherStatus {
                 project_path: String::new(),
                 project_name: String::new(),
                 linked_place_id: None,
+                linked_universe_id: None,
                 linked_place_name: None,
             })),
         }
@@ -331,9 +333,11 @@ async fn handle_connection(
             let body = &request[body_start + 4..];
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
                 let place_id = val["placeId"].as_u64();
+                let universe_id = val["universeId"].as_u64();
                 let place_name = val["placeName"].as_str().map(String::from);
                 let mut guard = status.lock().await;
                 guard.linked_place_id = place_id;
+                guard.linked_universe_id = universe_id;
                 guard.linked_place_name = place_name;
                 if let Some(id) = place_id {
                     send_log(&tx, "roxlit", &format!("Studio linked placeId {id}"));
