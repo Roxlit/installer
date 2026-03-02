@@ -13,37 +13,75 @@ import { Launcher } from "./components/launcher/Launcher";
 import { useInstaller } from "./hooks/useInstaller";
 import { useLauncher } from "./hooks/useLauncher";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
+import { Recovery } from "./components/steps/Recovery";
 import { TOOL_OPTIONS } from "./lib/types";
-import type { AppMode, ProjectEntry, RoxlitConfig } from "./lib/types";
+import type { AppMode, DiscoveredProject, ProjectEntry, RoxlitConfig } from "./lib/types";
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>("loading");
   const [config, setConfig] = useState<RoxlitConfig | null>(null);
   const [updateDelayDays, setUpdateDelayDays] = useState(7);
+  const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([]);
   const installer = useInstaller();
   const launcher = useLauncher();
   const { update, dismissUpdate } = useUpdateChecker(config);
 
-  // Boot: check for existing config
+  // Boot: 3-layer fallback — config → disk scan → wizard
   useEffect(() => {
-    invoke<RoxlitConfig | null>("load_config")
-      .then((loadedConfig) => {
+    async function boot() {
+      // Layer 1: Try loading existing config
+      try {
+        const loadedConfig = await invoke<RoxlitConfig | null>("load_config");
         if (loadedConfig && loadedConfig.projects.length > 0) {
-          setConfig(loadedConfig);
-          setUpdateDelayDays(loadedConfig.updateDelayDays ?? 7);
-          const active =
-            loadedConfig.projects.find(
-              (p) => p.path === loadedConfig.lastActiveProject
-            ) ?? loadedConfig.projects[0];
-          launcher.setProject(active);
-          setMode("launcher");
-        } else {
-          setMode("installer");
+          // Validate that at least one project path still exists on disk
+          const validProjects: ProjectEntry[] = [];
+          for (const project of loadedConfig.projects) {
+            const exists = await invoke<boolean>("check_project_exists", {
+              path: project.path,
+            });
+            if (exists) {
+              validProjects.push(project);
+            }
+          }
+
+          if (validProjects.length > 0) {
+            const updatedConfig = { ...loadedConfig, projects: validProjects };
+            setConfig(updatedConfig);
+            setUpdateDelayDays(updatedConfig.updateDelayDays ?? 7);
+            const active =
+              validProjects.find(
+                (p) => p.path === updatedConfig.lastActiveProject
+              ) ?? validProjects[0];
+            launcher.setProject(active);
+            setMode("launcher");
+            return;
+          }
+          // All project paths are gone — fall through to disk scan
         }
-      })
-      .catch(() => {
-        setMode("installer");
-      });
+      } catch {
+        // Config load failed — fall through to disk scan
+      }
+
+      // Layer 2: No valid config. Scan default parent dir for existing projects.
+      try {
+        const discovered = await invoke<DiscoveredProject[]>(
+          "scan_for_projects",
+          { parentDir: "~/RobloxProjects" }
+        );
+        if (discovered.length > 0) {
+          setDiscoveredProjects(discovered);
+          setMode("recovery");
+          return;
+        }
+      } catch {
+        // Scan failed — fall through to installer
+      }
+
+      // Layer 3: Nothing found. First-time user — show full wizard.
+      setMode("installer");
+    }
+
+    boot();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGoToLauncher = (project: ProjectEntry) => {
@@ -111,6 +149,28 @@ export default function App() {
           onNewProject={handleNewProject}
           onDismissUpdate={dismissUpdate}
           onUpdateDelayChange={handleUpdateDelayChange}
+        />
+      </div>
+    );
+  }
+
+  // Recovery mode — config lost but projects found on disk
+  if (mode === "recovery") {
+    return (
+      <div className="flex h-screen flex-col overflow-hidden rounded-lg border border-white/10 bg-[#09090b]">
+        <Titlebar title="Roxlit" />
+        <Recovery
+          discoveredProjects={discoveredProjects}
+          onRecovered={(project) => {
+            launcher.setProject(project);
+            setMode("launcher");
+            setTimeout(() => launcher.startDevelopment(), 300);
+          }}
+          onStartFresh={() => {
+            installer.reset();
+            setMode("installer");
+          }}
+          onRescan={(projects) => setDiscoveredProjects(projects)}
         />
       </div>
     );

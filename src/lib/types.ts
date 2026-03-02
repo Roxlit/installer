@@ -109,7 +109,7 @@ export interface InstallConfig {
 
 // --- App Mode ---
 
-export type AppMode = "loading" | "installer" | "launcher";
+export type AppMode = "loading" | "installer" | "launcher" | "recovery";
 
 // --- Config types (matches Rust RoxlitConfig) ---
 
@@ -129,6 +129,12 @@ export interface RoxlitConfig {
   lastUpdateCheck?: string | null;
   dismissedVersion?: string | null;
   updateDelayDays?: number | null;
+}
+
+export interface DiscoveredProject {
+  name: string;
+  path: string;
+  aiTool: string;
 }
 
 export interface UpdateInfo {
