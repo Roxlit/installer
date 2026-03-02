@@ -857,9 +857,17 @@ async fn kill_orphaned_rbxsync() {
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 }
 
-/// Auto-open Roblox Studio if the project has a linked placeId.
-/// Uses the `roblox-studio:` protocol to open the correct experience.
+/// Auto-open Roblox Studio if the project has a linked placeId
+/// and Studio is not already running.
 async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) {
+    // Skip if Studio is already running — the plugin will auto-connect
+    if is_studio_running().await {
+        if let Some(tx) = log_tx {
+            send_log(tx, "roxlit", "Studio already running — plugin will auto-connect");
+        }
+        return;
+    }
+
     // Read the config to find the placeId/universeId for this project
     let config = match crate::commands::config::load_config().await {
         Some(c) => c,
@@ -886,6 +894,34 @@ async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc:
     }
 
     open_studio_url(place_id, universe_id.unwrap_or(0)).await;
+}
+
+/// Check if Roblox Studio is already running.
+async fn is_studio_running() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let output = tokio::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq RobloxStudioBeta.exe", "/NH"])
+            .creation_flags(0x08000000)
+            .output()
+            .await;
+        if let Ok(out) = output {
+            let text = String::from_utf8_lossy(&out.stdout);
+            return text.contains("RobloxStudioBeta.exe");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = tokio::process::Command::new("pgrep")
+            .arg("-x")
+            .arg("RobloxStudio")
+            .output()
+            .await;
+        if let Ok(out) = output {
+            return out.status.success();
+        }
+    }
+    false
 }
 
 /// Open Roblox Studio for a specific place via the roblox-studio: protocol.
