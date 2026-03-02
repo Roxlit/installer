@@ -88,6 +88,45 @@ jobs:
           releaseDraft: false
           prerelease: false
 
+      - name: VirusTotal scan
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+          VERSION: ${{ inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find the NSIS setup .exe built by Tauri
+          $setup = Get-ChildItem -Recurse -Filter "*-setup.exe" src-tauri/target/release/bundle/nsis | Select-Object -First 1
+          if (-not $setup) {
+            Write-Warning "Setup .exe not found — skipping VirusTotal scan"
+            exit 0
+          }
+
+          # Compute SHA256
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          Write-Host "SHA256: $hash"
+          Write-Host "File: $($setup.Name)"
+
+          # Upload to VirusTotal API (best-effort, don't fail release if VT is down)
+          try {
+            curl.exe --request POST `
+              --url "https://www.virustotal.com/api/v3/files" `
+              --header "x-apikey: $env:VT_API_KEY" `
+              --form "file=@$($setup.FullName)" `
+              --silent --show-error
+          } catch {
+            Write-Warning "VirusTotal upload failed — scan link will still work once file is manually uploaded"
+          }
+
+          # Build VT URL and append to release body
+          $vtUrl = "https://www.virustotal.com/gui/file/$hash"
+          $currentBody = gh release view "v$env:VERSION" --json body -q ".body"
+          $vtSection = "`n---`n`nSecurity: [VirusTotal Scan]($vtUrl) · SHA256: ``$hash``"
+          $newBody = "$currentBody$vtSection"
+          gh release edit "v$env:VERSION" --notes "$newBody"
+
+          Write-Host "VirusTotal link: $vtUrl"
+        shell: pwsh
+
       - name: Build rbxsync-mcp for Windows
         run: |
           git clone --depth 1 https://github.com/Roxlit/rbxsync.git _rbxsync

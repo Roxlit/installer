@@ -142,6 +142,7 @@ export interface UpdateInfo {
   publishedAt: string;
   htmlUrl: string;
   body: string;
+  virusTotalUrl?: string;
 }
 
 // --- Rojo events (matches Rust RojoEvent) ---
