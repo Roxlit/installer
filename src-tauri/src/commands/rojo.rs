@@ -861,10 +861,7 @@ async fn kill_orphaned_rbxsync() {
 /// and Studio is not already running.
 async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) {
     // Skip if Studio is already running — the plugin will auto-connect
-    if is_studio_running().await {
-        if let Some(tx) = log_tx {
-            send_log(tx, "roxlit", "Studio already running — plugin will auto-connect");
-        }
+    if is_studio_running(log_tx).await {
         return;
     }
 
@@ -897,17 +894,25 @@ async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc:
 }
 
 /// Check if Roblox Studio is already running.
-async fn is_studio_running() -> bool {
+async fn is_studio_running(log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) -> bool {
     #[cfg(target_os = "windows")]
     {
-        let output = tokio::process::Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq RobloxStudioBeta.exe", "/NH"])
-            .creation_flags(0x08000000)
-            .output()
-            .await;
-        if let Ok(out) = output {
-            let text = String::from_utf8_lossy(&out.stdout);
-            return text.contains("RobloxStudioBeta.exe");
+        // Check both possible process names
+        for process_name in ["RobloxStudioBeta.exe", "RobloxStudioDesktop.exe"] {
+            let output = tokio::process::Command::new("tasklist")
+                .args(["/FI", &format!("IMAGENAME eq {process_name}"), "/NH"])
+                .creation_flags(0x08000000)
+                .output()
+                .await;
+            if let Ok(out) = output {
+                let text = String::from_utf8_lossy(&out.stdout);
+                if text.contains(process_name) {
+                    if let Some(tx) = log_tx {
+                        send_log(tx, "roxlit", &format!("Studio already running ({process_name}), skipping auto-open"));
+                    }
+                    return true;
+                }
+            }
         }
     }
     #[cfg(target_os = "macos")]
@@ -918,7 +923,12 @@ async fn is_studio_running() -> bool {
             .output()
             .await;
         if let Ok(out) = output {
-            return out.status.success();
+            if out.status.success() {
+                if let Some(tx) = log_tx {
+                    send_log(tx, "roxlit", "Studio already running, skipping auto-open");
+                }
+                return true;
+            }
         }
     }
     false

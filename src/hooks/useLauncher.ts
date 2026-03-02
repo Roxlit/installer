@@ -223,18 +223,8 @@ export function useLauncher() {
     // Stop any running servers first (silently)
     await stopAll();
 
-    // Start rojo
+    // Start rojo (+ Studio auto-open if not already running)
     await startRojo();
-
-    // Then open editor
-    try {
-      await invoke("open_in_editor", {
-        editor: project.aiTool,
-        path: project.path,
-      });
-    } catch {
-      // Editor open failure is non-critical
-    }
   }, [startRojo, stopAll]);
 
   const openEditor = useCallback(async () => {
