@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Play,
@@ -8,6 +8,8 @@ import {
   ExternalLink,
   Code2,
   Loader2,
+  ChevronDown,
+  Check,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
@@ -15,7 +17,7 @@ import { LogTerminal } from "./LogTerminal";
 import { UpdateBanner } from "./UpdateBanner";
 import { SettingsPopover } from "./SettingsPopover";
 import { TOOL_OPTIONS } from "@/lib/types";
-import type { RojoStatus, UpdateInfo } from "@/lib/types";
+import type { ProjectEntry, RojoStatus, UpdateInfo } from "@/lib/types";
 
 async function openExternal(url: string) {
   try {
@@ -45,6 +47,8 @@ interface LauncherProps {
   onNewProject: () => void;
   onDismissUpdate: () => void;
   onUpdateDelayChange: (days: number) => void;
+  allProjects: ProjectEntry[];
+  onProjectSwitch: (project: ProjectEntry) => void;
 }
 
 function StatusDot({ status }: { status: RojoStatus }) {
@@ -107,8 +111,28 @@ export function Launcher({
   onNewProject,
   onDismissUpdate,
   onUpdateDelayChange,
+  allProjects,
+  onProjectSwitch,
 }: LauncherProps) {
   const [editorLoading, setEditorLoading] = useState(false);
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
+  const hasMultipleProjects = allProjects.length > 1;
+
+  // Close project dropdown on outside click
+  useEffect(() => {
+    if (!projectDropdownOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (
+        projectDropdownRef.current &&
+        !projectDropdownRef.current.contains(e.target as Node)
+      ) {
+        setProjectDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [projectDropdownOpen]);
   const toolName =
     TOOL_OPTIONS.find((t) => t.id === aiTool)?.name ?? "your AI tool";
   const isRunning = rojoStatus === "running" || rojoStatus === "starting";
@@ -135,17 +159,68 @@ export function Launcher({
     >
       {/* Project info */}
       <div className="flex items-start justify-between">
-        <div className="flex items-start gap-3">
+        <div className="relative flex items-start gap-3" ref={projectDropdownRef}>
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
             <FolderOpen className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-base font-semibold">{projectName}</h2>
+            {hasMultipleProjects ? (
+              <button
+                onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+                className="flex items-center gap-1 text-base font-semibold transition-colors hover:text-emerald-400"
+              >
+                {projectName}
+                <ChevronDown className={`h-4 w-4 text-zinc-500 transition-transform ${projectDropdownOpen ? "rotate-180" : ""}`} />
+              </button>
+            ) : (
+              <h2 className="text-base font-semibold">{projectName}</h2>
+            )}
             <p className="mt-0.5 font-mono text-xs text-zinc-500">
               {projectPath}
             </p>
             <p className="mt-0.5 text-xs text-zinc-500">{toolName}</p>
           </div>
+
+          {/* Project dropdown */}
+          {projectDropdownOpen && (
+            <div className="absolute left-0 top-full z-10 mt-1 w-72 rounded-lg border border-white/10 bg-zinc-900 py-1 shadow-xl">
+              {allProjects.map((project) => {
+                const isActive = project.path === projectPath;
+                const projToolName =
+                  TOOL_OPTIONS.find((t) => t.id === project.aiTool)?.name ?? project.aiTool;
+                return (
+                  <button
+                    key={project.path}
+                    onClick={() => {
+                      if (!isActive) {
+                        onProjectSwitch(project);
+                      }
+                      setProjectDropdownOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-3 px-3 py-2 text-left transition-colors ${
+                      isActive
+                        ? "bg-emerald-500/[0.05]"
+                        : "hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="w-4 shrink-0">
+                      {isActive && (
+                        <Check className="h-3.5 w-3.5 text-emerald-400" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-sm font-medium ${isActive ? "text-emerald-400" : ""}`}>
+                        {project.name}
+                      </div>
+                      <div className="truncate text-[11px] text-zinc-500">
+                        {project.path} · {projToolName}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         <button
           onClick={handleOpenEditor}

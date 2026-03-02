@@ -9,6 +9,7 @@ pub struct UpdateInfo {
     pub published_at: String,
     pub html_url: String,
     pub body: String,
+    pub virus_total_url: Option<String>,
 }
 
 /// Parse an ISO 8601 UTC timestamp (e.g. "2025-06-15T10:30:00Z") into a Unix timestamp (seconds).
@@ -71,6 +72,18 @@ fn is_newer_version(local: &str, remote: &str) -> bool {
     let l = parse(local);
     let r = parse(remote);
     r > l
+}
+
+/// Extract a VirusTotal scan URL from a release body.
+/// Looks for "https://www.virustotal.com/gui/file/<hash>" in the markdown.
+fn extract_virustotal_url(body: &str) -> Option<String> {
+    let marker = "https://www.virustotal.com/gui/file/";
+    let start = body.find(marker)?;
+    let rest = &body[start..];
+    let end = rest
+        .find(|c: char| c == ')' || c == ' ' || c == '\n' || c == '`')
+        .unwrap_or(rest.len());
+    Some(rest[..end].to_string())
 }
 
 const RATE_LIMIT_SECS: i64 = 24 * 3600; // 24 hours
@@ -167,11 +180,14 @@ pub async fn check_for_update(
         }
     }
 
+    let virus_total_url = extract_virustotal_url(&release_body);
+
     Ok(Some(UpdateInfo {
         version: remote_version.to_string(),
         published_at: published_at.to_string(),
         html_url,
         body: release_body,
+        virus_total_url,
     }))
 }
 

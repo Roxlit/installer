@@ -1,4 +1,4 @@
-import { Download, X } from "lucide-react";
+import { Download, ShieldCheck, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import type { UpdateInfo } from "@/lib/types";
@@ -27,6 +27,16 @@ export function UpdateBanner({ update, onDismiss }: UpdateBannerProps) {
         Update available: <span className="font-semibold">v{update.version}</span>
       </span>
       <div className="flex items-center gap-1">
+        {update.virusTotalUrl && (
+          <button
+            onClick={() => openExternal(update.virusTotalUrl!)}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-white/5 hover:text-zinc-300"
+            title="View VirusTotal security scan"
+          >
+            <ShieldCheck className="h-3 w-3" />
+            Scan
+          </button>
+        )}
         <button
           onClick={() => openExternal(update.htmlUrl)}
           className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/10"
