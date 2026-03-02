@@ -154,6 +154,7 @@ pub async fn start_rojo(
     logger_state: tauri::State<'_, LoggerState>,
     log_server_state: tauri::State<'_, LogServerState>,
     launcher_status: tauri::State<'_, LauncherStatus>,
+    mcp_state: tauri::State<'_, crate::commands::logs::McpState>,
 ) -> Result<()> {
     // Check if already running
     {
@@ -301,10 +302,11 @@ pub async fn start_rojo(
         .unwrap_or("project");
     launcher_status.set_active(&project_path, project_name).await;
 
-    // Start the HTTP log server for Studio output capture + /status endpoint
+    // Start the HTTP log server for Studio output capture + /status + MCP relay
     if let Some(ref tx) = log_sender {
         let shared_status = launcher_status.shared();
-        if let Some(handle) = crate::commands::logs::start_log_server(tx.clone(), shared_status).await {
+        let shared_mcp = mcp_state.shared();
+        if let Some(handle) = crate::commands::logs::start_log_server(tx.clone(), shared_status, shared_mcp).await {
             log_server_state.set_handle(handle).await;
             send_log(tx, "roxlit", "Studio log server started on 127.0.0.1:19556");
         }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Shared state exposed to the Studio plugin via HTTP on port 19556.
 /// Updated by start_rojo/stop_rojo to reflect whether "Start Development" is active.
@@ -62,6 +62,48 @@ impl LauncherStatus {
         self.inner.clone()
     }
 }
+
+// ─── MCP Command Queue ───────────────────────────────────────────────────────
+// Enables AI tools to execute Luau code in Studio via a polling pattern:
+// 1. MCP sends code to launcher (POST /mcp/run-code) — blocks waiting for result
+// 2. Studio plugin polls (GET /mcp/pending-command) — picks up the command
+// 3. Plugin executes and sends result (POST /mcp/command-result) — unblocks step 1
+
+struct McpCommandResult {
+    success: bool,
+    result: String,
+}
+
+pub struct McpState {
+    inner: Arc<Mutex<McpStateInner>>,
+}
+
+pub(crate) struct McpStateInner {
+    /// Command waiting to be picked up by the Studio plugin.
+    pending_command: Option<(String, String)>, // (id, code)
+    /// Channel to deliver the result back to the POST /mcp/run-code caller.
+    result_sender: Option<oneshot::Sender<McpCommandResult>>,
+}
+
+impl Default for McpState {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(McpStateInner {
+                pending_command: None,
+                result_sender: None,
+            })),
+        }
+    }
+}
+
+impl McpState {
+    /// Get a clone of the inner Arc for passing to the HTTP server.
+    pub fn shared(&self) -> Arc<Mutex<McpStateInner>> {
+        self.inner.clone()
+    }
+}
+
+// ─── Logger State ────────────────────────────────────────────────────────────
 
 /// Managed Tauri state holding the current session logger (if any).
 pub struct LoggerState {
@@ -274,6 +316,7 @@ impl LogServerState {
 pub async fn start_log_server(
     log_tx: mpsc::UnboundedSender<String>,
     status: Arc<Mutex<LauncherStatusInner>>,
+    mcp: Arc<Mutex<McpStateInner>>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let listener = TcpListener::bind("127.0.0.1:19556").await.ok()?;
 
@@ -286,8 +329,9 @@ pub async fn start_log_server(
 
             let tx = log_tx.clone();
             let status = status.clone();
+            let mcp = mcp.clone();
             tokio::spawn(async move {
-                handle_connection(stream, tx, status).await;
+                handle_connection(stream, tx, status, mcp).await;
             });
         }
     });
@@ -300,6 +344,7 @@ async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     tx: mpsc::UnboundedSender<String>,
     status: Arc<Mutex<LauncherStatusInner>>,
+    mcp: Arc<Mutex<McpStateInner>>,
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -368,6 +413,126 @@ async fn handle_connection(
         if let Some(body_start) = request.find("\r\n\r\n") {
             let body = &request[body_start + 4..];
             process_log_batch(&tx, body);
+        }
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    // ─── MCP endpoints ────────────────────────────────────────────────────
+
+    // POST /mcp/run-code — MCP sends Luau code, blocks until plugin returns result
+    if first_line.starts_with("POST /mcp/run-code") {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            let body = &request[body_start + 4..];
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                let code = val["code"].as_str().unwrap_or("").to_string();
+                if code.is_empty() {
+                    let json = r#"{"error":"code field is required"}"#;
+                    let response = format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
+                        json.len(), json,
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    return;
+                }
+
+                let id = format!("{}", unix_timestamp());
+                let (result_tx, result_rx) = oneshot::channel::<McpCommandResult>();
+
+                // Enqueue the command
+                {
+                    let mut guard = mcp.lock().await;
+                    guard.pending_command = Some((id.clone(), code));
+                    guard.result_sender = Some(result_tx);
+                }
+
+                send_log(&tx, "mcp", &format!("Queued run_code command {id}"));
+
+                // Wait for result with 30s timeout
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    result_rx,
+                ).await;
+
+                let (status_code, json) = match result {
+                    Ok(Ok(res)) => {
+                        let escaped_result = res.result
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\n', "\\n")
+                            .replace('\r', "\\r")
+                            .replace('\t', "\\t");
+                        (
+                            "200 OK",
+                            format!(r#"{{"success":{},"result":"{}"}}"#, res.success, escaped_result),
+                        )
+                    }
+                    Ok(Err(_)) => {
+                        ("500 Internal Server Error", r#"{"error":"result channel dropped"}"#.to_string())
+                    }
+                    Err(_) => {
+                        // Timeout — clean up pending command
+                        let mut guard = mcp.lock().await;
+                        guard.pending_command = None;
+                        guard.result_sender = None;
+                        ("504 Gateway Timeout", r#"{"error":"Studio plugin did not respond within 30s"}"#.to_string())
+                    }
+                };
+
+                let response = format!(
+                    "HTTP/1.1 {status_code}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
+                    json.len(), json,
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                return;
+            }
+        }
+        let response = "HTTP/1.1 400 Bad Request\r\nContent-Length: 12\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\ninvalid json";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    // GET /mcp/pending-command — Plugin polls for commands to execute
+    if first_line.starts_with("GET /mcp/pending-command") {
+        let mut guard = mcp.lock().await;
+        if let Some((id, code)) = guard.pending_command.take() {
+            let escaped_code = code
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t");
+            let json = format!(r#"{{"id":"{}","code":"{}"}}"#, id, escaped_code);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
+                json.len(), json,
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        } else {
+            let response = "HTTP/1.1 204 No Content\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+            let _ = stream.write_all(response.as_bytes()).await;
+        }
+        return;
+    }
+
+    // POST /mcp/command-result — Plugin sends execution result
+    if first_line.starts_with("POST /mcp/command-result") {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            let body = &request[body_start + 4..];
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                let success = val["success"].as_bool().unwrap_or(false);
+                let result = val["result"].as_str().unwrap_or("").to_string();
+                let id = val["id"].as_str().unwrap_or("?");
+
+                send_log(&tx, "mcp", &format!("Result for command {id}: success={success}"));
+
+                // Deliver the result to the waiting POST /mcp/run-code caller
+                let mut guard = mcp.lock().await;
+                if let Some(sender) = guard.result_sender.take() {
+                    let _ = sender.send(McpCommandResult { success, result });
+                }
+            }
         }
         let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
         let _ = stream.write_all(response.as_bytes()).await;

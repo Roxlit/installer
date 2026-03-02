@@ -95,6 +95,7 @@ pub fn run() {
         .manage(commands::logs::LoggerState::default())
         .manage(commands::logs::LogServerState::default())
         .manage(commands::logs::LauncherStatus::default())
+        .manage(commands::logs::McpState::default())
         .invoke_handler(tauri::generate_handler![
             commands::detect::detect_environment,
             commands::install::run_installation,
