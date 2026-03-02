@@ -225,6 +225,18 @@ export function useLauncher() {
 
     // Start rojo (+ Studio auto-open if not already running)
     await startRojo();
+
+    // Open editor after a short delay so the window has settled
+    setTimeout(async () => {
+      try {
+        await invoke("open_in_editor", {
+          editor: project.aiTool,
+          path: project.path,
+        });
+      } catch {
+        // Editor open failure is non-critical
+      }
+    }, 2000);
   }, [startRojo, stopAll]);
 
   const openEditor = useCallback(async () => {
