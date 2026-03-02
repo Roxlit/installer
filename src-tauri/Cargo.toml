@@ -4,6 +4,7 @@ version = "0.10.0"
 description = "Roxlit — launcher for AI-powered Roblox development"
 authors = ["Roxlit"]
 edition = "2021"
+default-run = "roxlit"
 
 [lib]
 name = "roxlit_lib"
