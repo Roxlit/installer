@@ -67,5 +67,32 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
         ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nsrc/\n",
     )?;
 
+    // Local tracking directories for AI coaching (IDEA-033)
+    fs::create_dir_all(root.join("docs").join("ideas"))?;
+    fs::create_dir_all(root.join("docs").join("bugs"))?;
+
+    // Persistent memory across AI chat sessions (works with any AI tool)
+    let memory_dir = root.join(".roxlit").join("memory");
+    fs::create_dir_all(&memory_dir)?;
+    fs::write(
+        memory_dir.join("MEMORY.md"),
+        r#"# Project Memory
+
+> This file persists across AI chat sessions. The AI updates it with key decisions, patterns, and project state.
+
+## Architecture Decisions
+
+(AI will document key decisions here as the project evolves)
+
+## Known Patterns
+
+(AI will document coding patterns and conventions established in this project)
+
+## Current State
+
+(AI will update this with what's in progress, what's blocked, etc.)
+"#,
+    )?;
+
     Ok(())
 }
