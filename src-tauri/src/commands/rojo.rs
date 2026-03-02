@@ -154,6 +154,7 @@ pub async fn start_rojo(
     logger_state: tauri::State<'_, LoggerState>,
     log_server_state: tauri::State<'_, LogServerState>,
     launcher_status: tauri::State<'_, LauncherStatus>,
+    mcp_state: tauri::State<'_, crate::commands::logs::McpState>,
 ) -> Result<()> {
     // Check if already running
     {
@@ -301,10 +302,11 @@ pub async fn start_rojo(
         .unwrap_or("project");
     launcher_status.set_active(&project_path, project_name).await;
 
-    // Start the HTTP log server for Studio output capture + /status endpoint
+    // Start the HTTP log server for Studio output capture + /status + MCP relay
     if let Some(ref tx) = log_sender {
         let shared_status = launcher_status.shared();
-        if let Some(handle) = crate::commands::logs::start_log_server(tx.clone(), shared_status).await {
+        let shared_mcp = mcp_state.shared();
+        if let Some(handle) = crate::commands::logs::start_log_server(tx.clone(), shared_status, shared_mcp).await {
             log_server_state.set_handle(handle).await;
             send_log(tx, "roxlit", "Studio log server started on 127.0.0.1:19556");
         }
@@ -344,6 +346,7 @@ pub async fn start_rojo(
 
     let child_arc = state.child.clone();
     let event_clone = on_event.clone();
+    let launcher_status_shared = launcher_status.shared();
 
     // Read stdout and stream events
     let stdout_log_tx = log_sender.clone();
@@ -364,6 +367,10 @@ pub async fn start_rojo(
                         if !port_detected {
                             if let Some(port) = parse_rojo_port(&line) {
                                 port_detected = true;
+                                // Store the port in launcher status so /status exposes it
+                                let mut guard = launcher_status_shared.lock().await;
+                                guard.rojo_port = Some(port);
+                                drop(guard);
                                 let _ = event_clone.send(RojoEvent::Started { port });
                             }
                         }
@@ -850,9 +857,14 @@ async fn kill_orphaned_rbxsync() {
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 }
 
-/// Auto-open Roblox Studio if the project has a linked placeId.
-/// Uses the `roblox-studio:` protocol to open the correct experience.
+/// Auto-open Roblox Studio if the project has a linked placeId
+/// and Studio is not already running.
 async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) {
+    // Skip if Studio is already running — the plugin will auto-connect
+    if is_studio_running(log_tx).await {
+        return;
+    }
+
     // Read the config to find the placeId/universeId for this project
     let config = match crate::commands::config::load_config().await {
         Some(c) => c,
@@ -879,6 +891,47 @@ async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc:
     }
 
     open_studio_url(place_id, universe_id.unwrap_or(0)).await;
+}
+
+/// Check if Roblox Studio is already running.
+async fn is_studio_running(log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        // Check both possible process names
+        for process_name in ["RobloxStudioBeta.exe", "RobloxStudioDesktop.exe"] {
+            let output = tokio::process::Command::new("tasklist")
+                .args(["/FI", &format!("IMAGENAME eq {process_name}"), "/NH"])
+                .creation_flags(0x08000000)
+                .output()
+                .await;
+            if let Ok(out) = output {
+                let text = String::from_utf8_lossy(&out.stdout);
+                if text.contains(process_name) {
+                    if let Some(tx) = log_tx {
+                        send_log(tx, "roxlit", &format!("Studio already running ({process_name}), skipping auto-open"));
+                    }
+                    return true;
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = tokio::process::Command::new("pgrep")
+            .arg("-x")
+            .arg("RobloxStudio")
+            .output()
+            .await;
+        if let Ok(out) = output {
+            if out.status.success() {
+                if let Some(tx) = log_tx {
+                    send_log(tx, "roxlit", "Studio already running, skipping auto-open");
+                }
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Open Roblox Studio for a specific place via the roblox-studio: protocol.
