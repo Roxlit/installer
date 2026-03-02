@@ -230,6 +230,30 @@ pub async fn check_project_exists(path: String) -> bool {
     path.exists() && path.join("default.project.json").exists()
 }
 
+/// Persists the active project path in config so it's remembered on next launch.
+#[tauri::command]
+pub async fn set_active_project(path: String) -> Result<()> {
+    let config_path = config_path()
+        .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
+
+    let mut config = load_config().await.unwrap_or(RoxlitConfig {
+        version: 1,
+        projects: vec![],
+        last_active_project: None,
+        last_update_check: None,
+        dismissed_version: None,
+        update_delay_days: None,
+    });
+
+    config.last_active_project = Some(expand_tilde(&path));
+
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| InstallerError::Custom(e.to_string()))?;
+    std::fs::write(&config_path, json)?;
+
+    Ok(())
+}
+
 /// Persist a placeId and universeId for the given project path in the config file.
 /// Called when stop_rojo flushes the linked IDs from LauncherStatus.
 pub fn save_place_id(project_path: &str, place_id: u64, universe_id: Option<u64>) {

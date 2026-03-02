@@ -93,6 +93,16 @@ export default function App() {
     }, 300);
   };
 
+  const handleProjectSwitch = async (project: ProjectEntry) => {
+    await launcher.stopAll();
+    launcher.setProject(project);
+    try {
+      await invoke("set_active_project", { path: project.path });
+    } catch {
+      // Non-critical — project switch still works without persisting
+    }
+  };
+
   const handleNewProject = async () => {
     // Stop running servers before switching to installer
     await launcher.stopAll();
@@ -149,6 +159,8 @@ export default function App() {
           onNewProject={handleNewProject}
           onDismissUpdate={dismissUpdate}
           onUpdateDelayChange={handleUpdateDelayChange}
+          allProjects={config?.projects ?? []}
+          onProjectSwitch={handleProjectSwitch}
         />
       </div>
     );
