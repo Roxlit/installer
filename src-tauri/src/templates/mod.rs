@@ -162,7 +162,7 @@ pub fn rbxsync_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.8.0";
+pub const CONTEXT_VERSION: &str = "0.9.0";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -534,6 +534,28 @@ This project was set up with Roxlit. The Roxlit launcher manages Rojo automatica
 - **Session logs on disk**: Roxlit captures ALL output to `.roxlit/logs/latest.log` — Rojo AND Roblox Studio console (prints, warnings, errors). You can read this file to diagnose issues without asking the user to copy-paste. Previous sessions are saved as `.roxlit/logs/session-<timestamp>.log` (up to 10 retained).
 - **Copy logs from UI**: The user can also click "Copy All" in the Roxlit launcher terminal to copy all logs and paste them here.
 - **Do NOT remove or modify the Roxlit-generated sections above.** They are auto-updated by Roxlit when new versions are available.
+
+## Development Discipline
+
+- **One thing at a time.** Finish the current task before starting another. If the user asks for something new mid-task, ask: "Finish current task first, or switch?"
+- **Bugs before features.** If there are known bugs (check `docs/bugs/`), list them before starting a new feature. Ask: "There are X open bugs. Fix first or proceed with the feature?"
+- **Ideas get documented, not implemented.** If the user mentions a future idea, ask: "Want me to document this in `docs/ideas/`?" Never implement an idea unless the user explicitly says "do it" or "implement it".
+- **Multiple requests? Organize first.** If the user asks for 3+ things at once, propose an order: "Let's organize: 1. Fix X, 2. Fix Y, 3. Add Z. Start with #1?"
+- **Track bugs locally.** When you find or the user reports a bug, document it in `docs/bugs/BUG-NNN-description.md` with: what happens, steps to reproduce, severity (critical/major/minor).
+- **Track ideas locally.** Document ideas in `docs/ideas/IDEA-NNN-description.md` with: problem, proposed solution, priority.
+
+## Project Memory
+
+This project uses persistent memory across chat sessions in `.roxlit/memory/MEMORY.md`:
+- **Start of each chat**: Read `.roxlit/memory/MEMORY.md` for project context, past decisions, and known issues.
+- **Important decisions**: Update `.roxlit/memory/MEMORY.md` when you make architectural decisions, discover patterns, or establish conventions.
+- **Keep it concise**: Memory file should be a quick reference, not a novel. Link to `docs/ideas/` and `docs/bugs/` for details.
+
+## Context Freshness
+
+Before each response, read `.roxlit/context/version.txt` (a single number).
+If the number changed since you last read it, re-read this entire file as it has been updated.
+Do NOT re-read the specific context packs (.roxlit/context/*.md) — those are read on-demand when you need them.
 
 {USER_NOTES_MARKER}
 

@@ -102,6 +102,8 @@ pub fn run() {
             commands::config::save_project,
             commands::config::save_update_state,
             commands::config::save_settings,
+            commands::config::scan_for_projects,
+            commands::config::check_project_exists,
             commands::update::check_for_update,
             commands::rojo::start_rojo,
             commands::rojo::stop_rojo,

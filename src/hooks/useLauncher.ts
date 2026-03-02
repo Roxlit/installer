@@ -158,6 +158,22 @@ export function useLauncher() {
     const project = projectRef.current;
     if (!project) return;
 
+    // Verify project directory still exists on disk
+    try {
+      const exists = await invoke<boolean>("check_project_exists", {
+        path: project.path,
+      });
+      if (!exists) {
+        dispatch({
+          type: "ROJO_ERROR",
+          message: `Project directory not found: ${project.path}\nIt may have been moved or deleted.`,
+        });
+        return;
+      }
+    } catch {
+      // Check failed — proceed anyway, start_rojo will fail with a clearer error
+    }
+
     dispatch({ type: "ROJO_STARTING" });
     stopRequestedRef.current = false;
     restartCountRef.current = 0;

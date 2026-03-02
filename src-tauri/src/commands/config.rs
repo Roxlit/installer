@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::{InstallerError, Result};
 use crate::util::expand_tilde;
@@ -60,9 +60,17 @@ pub async fn save_project(project: ProjectEntry) -> Result<RoxlitConfig> {
     let mut project = project;
     project.path = expand_tilde(&project.path);
 
-    // Upsert by path
+    // Upsert by path — preserve place_id/universe_id from existing entry
     if let Some(existing) = config.projects.iter_mut().find(|p| p.path == project.path) {
+        let preserved_place_id = existing.place_id;
+        let preserved_universe_id = existing.universe_id;
         *existing = project.clone();
+        if existing.place_id.is_none() {
+            existing.place_id = preserved_place_id;
+        }
+        if existing.universe_id.is_none() {
+            existing.universe_id = preserved_universe_id;
+        }
     } else {
         config.projects.push(project.clone());
     }
@@ -137,6 +145,89 @@ pub async fn save_settings(update_delay_days: u32) -> Result<()> {
     std::fs::write(&path, json)?;
 
     Ok(())
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredProject {
+    pub name: String,
+    pub path: String,
+    pub ai_tool: String,
+}
+
+/// Scans a parent directory for existing Rojo projects (subdirs with default.project.json).
+/// Skips dotfiles/dotdirs. Detects AI tool from context files.
+#[tauri::command]
+pub async fn scan_for_projects(parent_dir: String) -> Vec<DiscoveredProject> {
+    let expanded = expand_tilde(&parent_dir);
+    let parent = Path::new(&expanded);
+    let mut projects = Vec::new();
+
+    let entries = match std::fs::read_dir(parent) {
+        Ok(e) => e,
+        Err(_) => return projects,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        // Skip dotfiles/dotdirs
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+
+        // Skip non-directories
+        if !path.is_dir() {
+            continue;
+        }
+
+        // Must have default.project.json (Rojo project indicator)
+        if !path.join("default.project.json").exists() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path_str = path.to_string_lossy().to_string();
+        let ai_tool = detect_ai_tool(&path);
+
+        projects.push(DiscoveredProject {
+            name,
+            path: path_str,
+            ai_tool,
+        });
+    }
+
+    projects
+}
+
+/// Detects which AI tool a project uses by checking for context files.
+fn detect_ai_tool(project_path: &Path) -> String {
+    if project_path.join("CLAUDE.md").exists() {
+        return "claude".to_string();
+    }
+    if project_path.join(".cursorrules").exists() {
+        return "cursor".to_string();
+    }
+    if project_path.join(".windsurfrules").exists() {
+        return "windsurf".to_string();
+    }
+    if project_path
+        .join(".github")
+        .join("copilot-instructions.md")
+        .exists()
+    {
+        return "vscode".to_string();
+    }
+    // Default for unknown
+    "claude".to_string()
+}
+
+/// Checks if a project path still exists on disk (directory + default.project.json).
+#[tauri::command]
+pub async fn check_project_exists(path: String) -> bool {
+    let expanded = expand_tilde(&path);
+    let path = Path::new(&expanded);
+    path.exists() && path.join("default.project.json").exists()
 }
 
 /// Persist a placeId and universeId for the given project path in the config file.
