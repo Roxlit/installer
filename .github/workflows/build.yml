@@ -44,11 +44,8 @@ jobs:
         with:
           tauriScript: npx tauri
 
-      - name: Verify rbxsync-mcp compiles
-        run: |
-          git clone --depth 1 --branch v1.3.0 https://github.com/Smokestack-Games/rbxsync.git _rbxsync
-          cd _rbxsync
-          cargo check -p rbxsync-mcp
+      - name: Verify roxlit-mcp compiles
+        run: cd src-tauri && cargo check --bin roxlit-mcp
         shell: pwsh
 
       - name: Upload portable exe

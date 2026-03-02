@@ -91,7 +91,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .manage(commands::rojo::RojoProcess::default())
-        .manage(commands::rojo::RbxSyncProcess::default())
         .manage(commands::logs::LoggerState::default())
         .manage(commands::logs::LogServerState::default())
         .manage(commands::logs::LauncherStatus::default())
@@ -129,10 +128,6 @@ pub fn run() {
                 }
                 // Kill rojo serve when the window is closed
                 if let Some(state) = _window.try_state::<commands::rojo::RojoProcess>() {
-                    state.inner().kill_sync();
-                }
-                // Kill rbxsync serve when the window is closed
-                if let Some(state) = _window.try_state::<commands::rojo::RbxSyncProcess>() {
                     state.inner().kill_sync();
                 }
                 // Stop the Studio log HTTP server when the window is closed

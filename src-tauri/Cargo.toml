@@ -1,9 +1,10 @@
 [package]
 name = "roxlit"
-version = "0.9.2"
+version = "0.10.0"
 description = "Roxlit — launcher for AI-powered Roblox development"
 authors = ["Roxlit"]
 edition = "2021"
+default-run = "roxlit"
 
 [lib]
 name = "roxlit_lib"
@@ -20,10 +21,12 @@ tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "blocking"] }
 thiserror = "2"
 zip = "2"
 dirs = "6"
 futures-util = "0.3"
 anyhow = "1"
-rbxsync-server = { git = "https://github.com/Roxlit/rbxsync.git" }
+[[bin]]
+name = "roxlit-mcp"
+path = "src/bin/roxlit_mcp.rs"

@@ -65,8 +65,8 @@ export interface DetectionResult {
   rojoVersion: string | null;
   aftmanInstalled: boolean;
   aftmanVersion: string | null;
-  rbxsyncInstalled: boolean; // Still needed for install step (rbxsync-mcp)
-  rbxsyncVersion: string | null;
+  roxlitMcpInstalled: boolean;
+  roxlitMcpVersion: string | null;
 }
 
 export type SetupEvent =
@@ -103,7 +103,7 @@ export interface InstallConfig {
   projectName: string;
   skipAftman: boolean;
   skipRojo: boolean;
-  skipRbxsync: boolean;
+  skipRoxlitMcp: boolean;
   pluginsPath: string | null;
 }
 

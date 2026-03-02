@@ -7,8 +7,8 @@ use std::path::Path;
 pub fn generate_context(project_path: &str, ai_tool: &str, project_name: &str) -> Result<()> {
     let root = Path::new(project_path);
 
-    // Check if MCP binary exists to include RbxSync MCP info
-    let mcp_bin_name = if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" };
+    // Check if MCP binary exists to include Roxlit MCP info
+    let mcp_bin_name = if cfg!(target_os = "windows") { "roxlit-mcp.exe" } else { "roxlit-mcp" };
     let mcp_available = dirs::home_dir()
         .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name).exists())
         .unwrap_or(false);
@@ -72,7 +72,7 @@ fn write_context_packs(project_root: &Path) -> Result<()> {
 
 /// Writes MCP server configuration for the selected AI tool.
 pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
-    let mcp_bin_name = if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" };
+    let mcp_bin_name = if cfg!(target_os = "windows") { "roxlit-mcp.exe" } else { "roxlit-mcp" };
     let mcp_binary = dirs::home_dir()
         .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name))
         .ok_or_else(|| crate::error::InstallerError::Custom("Cannot find home directory".into()))?;
@@ -89,7 +89,7 @@ pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
             let config = format!(
                 r#"{{
   "mcpServers": {{
-    "rbxsync": {{
+    "roxlit": {{
       "type": "stdio",
       "command": "{mcp_path_str}"
     }}
@@ -106,7 +106,7 @@ pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
             let config = format!(
                 r#"{{
   "mcpServers": {{
-    "rbxsync": {{
+    "roxlit": {{
       "command": "{mcp_path_str}"
     }}
   }}
@@ -122,7 +122,7 @@ pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
             let config = format!(
                 r#"{{
   "servers": {{
-    "rbxsync": {{
+    "roxlit": {{
       "type": "stdio",
       "command": "{mcp_path_str}"
     }}
@@ -143,7 +143,7 @@ pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
                     let config = format!(
                         r#"{{
   "mcpServers": {{
-    "rbxsync": {{
+    "roxlit": {{
       "command": "{mcp_path_str}"
     }}
   }}
@@ -160,7 +160,7 @@ pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
             let config = format!(
                 r#"{{
   "mcpServers": {{
-    "rbxsync": {{
+    "roxlit": {{
       "type": "stdio",
       "command": "{mcp_path_str}"
     }}

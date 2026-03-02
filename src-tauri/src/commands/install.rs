@@ -42,7 +42,7 @@ pub struct InstallConfig {
     pub project_name: String,
     pub skip_aftman: bool,
     pub skip_rojo: bool,
-    pub skip_rbxsync: bool,
+    pub skip_roxlit_mcp: bool,
     pub plugins_path: Option<String>,
 }
 
@@ -160,33 +160,33 @@ pub async fn run_installation(
         }
     }
 
-    // Step 4: Install RbxSync (if needed) — non-critical, warn on failure
-    if !config.skip_rbxsync {
+    // Step 4: Install Roxlit MCP (if needed) — non-critical, warn on failure
+    if !config.skip_roxlit_mcp {
         step_index += 1;
         on_event
             .send(SetupEvent::StepStarted {
-                step: "rbxsync".into(),
-                description: "Installing RbxSync (instance sync)".into(),
+                step: "roxlit_mcp".into(),
+                description: "Installing Roxlit MCP (runtime tools)".into(),
                 step_index,
                 total_steps,
             })
             .map_err(|e| InstallerError::Custom(e.to_string()))?;
 
-        match install_rbxsync(&config, &on_event).await {
+        match install_roxlit_plugin(&config, &on_event).await {
             Ok(()) => {
                 on_event
                     .send(SetupEvent::StepCompleted {
-                        step: "rbxsync".into(),
-                        detail: "RbxSync installed successfully".into(),
+                        step: "roxlit_mcp".into(),
+                        detail: "Roxlit MCP installed successfully".into(),
                     })
                     .map_err(|e| InstallerError::Custom(e.to_string()))?;
             }
             Err(e) => {
-                // RbxSync is non-critical — warn but continue
+                // Roxlit MCP is non-critical — warn but continue
                 on_event
                     .send(SetupEvent::StepWarning {
-                        step: "rbxsync".into(),
-                        message: format!("Could not install RbxSync: {e}. You can install it manually later."),
+                        step: "roxlit_mcp".into(),
+                        message: format!("Could not install Roxlit MCP: {e}. You can install it manually later."),
                     })
                     .map_err(|e| InstallerError::Custom(e.to_string()))?;
             }
@@ -250,7 +250,7 @@ fn calculate_total_steps(config: &InstallConfig) -> usize {
     if !config.skip_rojo {
         steps += 1;
     }
-    if !config.skip_rbxsync {
+    if !config.skip_roxlit_mcp {
         steps += 1;
     }
     steps
@@ -520,9 +520,6 @@ async fn install_rojo(config: &InstallConfig, on_event: &Channel<SetupEvent>) ->
     Ok(())
 }
 
-const RBXSYNC_REPO: &str = "Smokestack-Games/rbxsync";
-const RBXSYNC_VERSION: &str = "1.3.0";
-
 /// Downloads a binary from a URL to the target path with progress reporting.
 async fn download_binary(url: &str, target_path: &PathBuf) -> Result<()> {
     if let Some(parent) = target_path.parent() {
@@ -550,33 +547,25 @@ async fn download_binary(url: &str, target_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Returns the RbxSync MCP server download URL for the current platform.
-/// macOS ARM: from upstream rbxsync releases. Windows: from our Roxlit releases.
-fn rbxsync_mcp_download_url() -> Option<String> {
-    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        Some(format!(
-            "https://github.com/{RBXSYNC_REPO}/releases/download/v{RBXSYNC_VERSION}/rbxsync-mcp-macos-arm64"
-        ))
-    } else if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-        Some(format!(
-            "https://github.com/Roxlit/installer/releases/latest/download/rbxsync-mcp.exe"
-        ))
+/// Returns the Roxlit MCP server download URL for the current platform.
+fn roxlit_mcp_download_url() -> Option<String> {
+    if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+        Some("https://github.com/Roxlit/installer/releases/latest/download/roxlit-mcp.exe".to_string())
     } else {
         None
     }
 }
 
-/// Downloads and installs RbxSync Studio plugin and MCP server (if available).
-/// The rbxsync server itself is now embedded in the Tauri app — no CLI binary needed.
-async fn install_rbxsync(config: &InstallConfig, on_event: &Channel<SetupEvent>) -> Result<()> {
+/// Downloads and installs Roxlit Studio plugin and MCP server.
+async fn install_roxlit_plugin(config: &InstallConfig, on_event: &Channel<SetupEvent>) -> Result<()> {
     let home = dirs::home_dir()
         .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
     let bin_dir = home.join(".roxlit").join("bin");
 
-    // 1. Download unified Roxlit Studio plugin (replaces RbxSync + RoxlitDebug)
+    // 1. Download unified Roxlit Studio plugin
     on_event
         .send(SetupEvent::StepProgress {
-            step: "rbxsync".into(),
+            step: "plugin".into(),
             progress: 0.2,
             detail: "Installing Roxlit Studio plugin...".into(),
         })
@@ -604,34 +593,40 @@ async fn install_rbxsync(config: &InstallConfig, on_event: &Channel<SetupEvent>)
     download_binary(plugin_url, &plugin_path).await?;
 
     // Clean up old plugins that the unified Roxlit plugin replaces
-    let _ = std::fs::remove_file(plugins_path.join("RbxSync.rbxm"));
+    let _ = std::fs::remove_file(plugins_path.join("Rojo.rbxm"));
+    let _ = std::fs::remove_file(plugins_path.join("RbxSync.rbxm")); // legacy
+    let _ = std::fs::remove_file(plugins_path.join("rbxsync.rbxm")); // legacy
     let _ = std::fs::remove_file(plugins_path.join("RoxlitDebug.rbxm"));
     let _ = std::fs::remove_file(plugins_path.join("RoxlitDebug.rbxmx"));
 
-    // 2. Download MCP server (macOS ARM + Windows x64)
-    if let Some(mcp_url) = rbxsync_mcp_download_url() {
+    // 2. Download MCP server (Windows x64)
+    if let Some(mcp_url) = roxlit_mcp_download_url() {
         on_event
             .send(SetupEvent::StepProgress {
-                step: "rbxsync".into(),
+                step: "plugin".into(),
                 progress: 0.6,
-                detail: "Installing RbxSync MCP server...".into(),
+                detail: "Installing Roxlit MCP server...".into(),
             })
             .map_err(|e| InstallerError::Custom(e.to_string()))?;
 
         let mcp_bin_name = if cfg!(target_os = "windows") {
-            "rbxsync-mcp.exe"
+            "roxlit-mcp.exe"
         } else {
-            "rbxsync-mcp"
+            "roxlit-mcp"
         };
         let mcp_path = bin_dir.join(mcp_bin_name);
         download_binary(&mcp_url, &mcp_path).await?;
+
+        // Clean up old rbxsync-mcp
+        let old_mcp = bin_dir.join(if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" });
+        let _ = std::fs::remove_file(&old_mcp);
     }
 
     on_event
         .send(SetupEvent::StepProgress {
-            step: "rbxsync".into(),
+            step: "plugin".into(),
             progress: 1.0,
-            detail: "RbxSync installed".into(),
+            detail: "Roxlit plugin installed".into(),
         })
         .map_err(|e| InstallerError::Custom(e.to_string()))?;
 

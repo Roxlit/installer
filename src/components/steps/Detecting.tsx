@@ -61,7 +61,7 @@ export function Detecting({
             : "Will be installed",
         },
         {
-          label: "RbxSync",
+          label: "Roxlit MCP",
           status: "pass" as const,
           detail: "Built-in",
         },
@@ -71,7 +71,7 @@ export function Detecting({
         { label: "Roblox Studio", status: "pending" as const },
         { label: "Aftman", status: "pending" as const },
         { label: "Rojo", status: "pending" as const },
-        { label: "RbxSync", status: "pending" as const },
+        { label: "Roxlit MCP", status: "pending" as const },
       ];
 
   return (

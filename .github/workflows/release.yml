@@ -127,20 +127,19 @@ jobs:
           Write-Host "VirusTotal link: $vtUrl"
         shell: pwsh
 
-      - name: Build rbxsync-mcp for Windows
+      - name: Build roxlit-mcp for Windows
         run: |
-          git clone --depth 1 https://github.com/Roxlit/rbxsync.git _rbxsync
-          cd _rbxsync
-          cargo build --release -p rbxsync-mcp
-          copy target\release\rbxsync-mcp.exe ..\rbxsync-mcp.exe
+          cd src-tauri
+          cargo build --release --bin roxlit-mcp
+          copy target\release\roxlit-mcp.exe ..\roxlit-mcp.exe
         shell: pwsh
 
-      - name: Upload rbxsync-mcp to release
+      - name: Upload roxlit-mcp to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
-          gh release upload "v$env:VERSION" rbxsync-mcp.exe --clobber
+          gh release upload "v$env:VERSION" roxlit-mcp.exe --clobber
         shell: pwsh
 
       - name: Bump version on dev branch

@@ -13,8 +13,8 @@ pub struct DetectionResult {
     pub rojo_version: Option<String>,
     pub aftman_installed: bool,
     pub aftman_version: Option<String>,
-    pub rbxsync_installed: bool,
-    pub rbxsync_version: Option<String>,
+    pub roxlit_mcp_installed: bool,
+    pub roxlit_mcp_version: Option<String>,
 }
 
 /// Scans the system for Roblox Studio, Rojo, and Aftman.
@@ -25,7 +25,7 @@ pub async fn detect_environment() -> crate::error::Result<DetectionResult> {
     let (studio_installed, studio_plugins_path) = detect_studio(&os);
     let (rojo_installed, rojo_version) = detect_cli_tool("rojo").await;
     let (aftman_installed, aftman_version) = detect_cli_tool("aftman").await;
-    let (rbxsync_installed, rbxsync_version) = detect_rbxsync(&os).await;
+    let (roxlit_mcp_installed, roxlit_mcp_version) = detect_roxlit_mcp(&os).await;
 
     Ok(DetectionResult {
         os,
@@ -35,8 +35,8 @@ pub async fn detect_environment() -> crate::error::Result<DetectionResult> {
         rojo_version,
         aftman_installed,
         aftman_version,
-        rbxsync_installed,
-        rbxsync_version,
+        roxlit_mcp_installed,
+        roxlit_mcp_version,
     })
 }
 
@@ -116,7 +116,7 @@ async fn detect_cli_tool(name: &str) -> (bool, Option<String>) {
     }
 }
 
-/// RbxSync server is now embedded in the Tauri app — always available.
-async fn detect_rbxsync(_os: &str) -> (bool, Option<String>) {
+/// Roxlit MCP server is now embedded in the Tauri app — always available.
+async fn detect_roxlit_mcp(_os: &str) -> (bool, Option<String>) {
     (true, Some("Built-in".to_string()))
 }

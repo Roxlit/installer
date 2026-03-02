@@ -55,15 +55,15 @@ pub fn create_project(project_path: &str, project_name: &str) -> Result<()> {
         templates::debug_module(),
     )?;
 
-    // RbxSync config — exclude services Rojo handles, sync only instances
+    // Roxlit MCP config — exclude services Rojo handles, sync only instances
     fs::write(
-        root.join("rbxsync.json"),
-        templates::rbxsync_json(project_name),
+        root.join("roxlit-mcp.json"),
+        templates::roxlit_mcp_json(project_name),
     )?;
 
-    // RbxSync ignore file
+    // Roxlit MCP ignore file
     fs::write(
-        root.join(".rbxsyncignore"),
+        root.join(".roxlit-mcp-ignore"),
         ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nsrc/\n",
     )?;
 

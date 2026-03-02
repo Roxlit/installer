@@ -76,7 +76,7 @@ export function Complete({
         {[
           "Aftman (toolchain manager)",
           "Rojo (script sync with Studio)",
-          "RbxSync (instance sync with Studio)",
+          "Roxlit MCP (runtime tools for Studio)",
           `${contextFile} (AI context)`,
           "Roblox project structure",
         ].map((item) => (

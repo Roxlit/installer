@@ -139,14 +139,14 @@ return Debug
 "#
 }
 
-/// Returns the rbxsync.json configuration.
-/// RbxSync is used ONLY for MCP tools (run_code, run_test, insert_model).
+/// Returns the roxlit-mcp.json configuration.
+/// Roxlit MCP is used ONLY for MCP tools (run_code, run_test, insert_model).
 /// Instance sync is handled entirely by Rojo via .model.json files.
-pub fn rbxsync_json(project_name: &str) -> String {
+pub fn roxlit_mcp_json(project_name: &str) -> String {
     format!(
         r#"{{
   "name": "{project_name}",
-  "tree": "./.rbxsync",
+  "tree": "./.roxlit-mcp",
   "config": {{
     "excludeServices": [
       "CoreGui",
@@ -179,7 +179,7 @@ pub fn ai_context(project_name: &str, mcp_available: bool) -> String {
         r#"
 ## MCP Tools (Testing & Marketplace Only)
 
-MCP tools connect to Roblox Studio via the RbxSync plugin. Use them ONLY for:
+MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 
 - `run_code` — Execute Luau in Studio. For quick checks, verifying state, debugging. NOT for building instances (use .model.json instead).
 - `run_test` — Start a playtest, capture all console output, stop. Your #1 debugging tool.

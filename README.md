@@ -65,7 +65,7 @@ The AI reads these files automatically and writes code that follows best practic
 | Frontend | React 19, TypeScript, Tailwind CSS v4 |
 | Backend | Rust |
 | File sync | [Rojo](https://rojo.space) |
-| MCP server | [RbxSync](https://github.com/Roxlit/rbxsync) — AI executes Luau, creates instances, runs playtests |
+| MCP server | roxlit-mcp (`src-tauri/src/bin/roxlit_mcp.rs`) — AI executes Luau in Studio via MCP protocol |
 | Builds | GitHub Actions (NSIS installer) |
 
 ## Building from source
