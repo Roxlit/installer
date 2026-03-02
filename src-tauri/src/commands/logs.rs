@@ -12,6 +12,8 @@ pub(crate) struct LauncherStatusInner {
     pub(crate) active: bool,
     pub(crate) project_path: String,
     pub(crate) project_name: String,
+    /// Port where rojo serve is running (detected from stdout).
+    pub(crate) rojo_port: Option<u16>,
     /// placeId linked to the current project (set by the Studio plugin via POST /link-place)
     pub(crate) linked_place_id: Option<u64>,
     pub(crate) linked_universe_id: Option<u64>,
@@ -25,6 +27,7 @@ impl Default for LauncherStatus {
                 active: false,
                 project_path: String::new(),
                 project_name: String::new(),
+                rojo_port: None,
                 linked_place_id: None,
                 linked_universe_id: None,
                 linked_place_name: None,
@@ -55,6 +58,7 @@ impl LauncherStatus {
     pub async fn set_inactive(&self) {
         let mut guard = self.inner.lock().await;
         guard.active = false;
+        guard.rojo_port = None;
     }
 
     /// Get a clone of the inner Arc for passing to the log server.
@@ -371,12 +375,17 @@ async fn handle_connection(
             Some(id) => format!("{id}"),
             None => "null".to_string(),
         };
+        let rojo_port = match guard.rojo_port {
+            Some(p) => format!("{p}"),
+            None => "null".to_string(),
+        };
         let json = format!(
-            r#"{{"active":{},"projectPath":"{}","projectName":"{}","linkedPlaceId":{}}}"#,
+            r#"{{"active":{},"projectPath":"{}","projectName":"{}","linkedPlaceId":{},"rojoPort":{}}}"#,
             guard.active,
             guard.project_path.replace('\\', "\\\\").replace('"', "\\\""),
             guard.project_name.replace('"', "\\\""),
             linked_place,
+            rojo_port,
         );
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",

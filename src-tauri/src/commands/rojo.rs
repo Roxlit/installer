@@ -346,6 +346,7 @@ pub async fn start_rojo(
 
     let child_arc = state.child.clone();
     let event_clone = on_event.clone();
+    let launcher_status_shared = launcher_status.shared();
 
     // Read stdout and stream events
     let stdout_log_tx = log_sender.clone();
@@ -366,6 +367,10 @@ pub async fn start_rojo(
                         if !port_detected {
                             if let Some(port) = parse_rojo_port(&line) {
                                 port_detected = true;
+                                // Store the port in launcher status so /status exposes it
+                                let mut guard = launcher_status_shared.lock().await;
+                                guard.rojo_port = Some(port);
+                                drop(guard);
                                 let _ = event_clone.send(RojoEvent::Started { port });
                             }
                         }
