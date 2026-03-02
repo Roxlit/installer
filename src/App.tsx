@@ -84,9 +84,14 @@ export default function App() {
     boot();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleGoToLauncher = (project: ProjectEntry) => {
+  const handleGoToLauncher = async (project: ProjectEntry) => {
     launcher.setProject(project);
     setMode("launcher");
+    try {
+      await invoke("set_active_project", { path: project.path });
+    } catch {
+      // Non-critical
+    }
     // Auto-start development
     setTimeout(() => {
       launcher.startDevelopment();
