@@ -353,12 +353,54 @@ async fn handle_connection(
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let mut buf = vec![0u8; 65536];
-    let n = match stream.read(&mut buf).await {
+    // Read headers (and possibly body) in the first chunk
+    let mut total = match stream.read(&mut buf).await {
         Ok(0) | Err(_) => return,
         Ok(n) => n,
     };
 
-    let request = String::from_utf8_lossy(&buf[..n]);
+    // If this is a POST with Content-Length, ensure we read the full body.
+    // Some clients (e.g. PowerShell) send headers and body in separate TCP packets.
+    let header_str = String::from_utf8_lossy(&buf[..total]);
+    if let Some(header_end) = header_str.find("\r\n\r\n") {
+        // Parse Content-Length from headers
+        let content_length: usize = header_str[..header_end]
+            .lines()
+            .find_map(|line| {
+                let lower = line.to_lowercase();
+                if lower.starts_with("content-length:") {
+                    lower.trim_start_matches("content-length:").trim().parse().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+
+        let body_start = header_end + 4;
+        let body_received = total.saturating_sub(body_start);
+
+        // Read remaining body bytes if needed
+        if body_received < content_length {
+            let remaining = content_length - body_received;
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut read_so_far = 0;
+            while read_so_far < remaining {
+                if tokio::time::Instant::now() > deadline {
+                    break;
+                }
+                let end = (total + remaining - read_so_far).min(buf.len());
+                match stream.read(&mut buf[total..end]).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        total += n;
+                        read_so_far += n;
+                    }
+                }
+            }
+        }
+    }
+
+    let request = String::from_utf8_lossy(&buf[..total]);
 
     // Parse the HTTP request line
     let first_line = request.lines().next().unwrap_or("");
