@@ -1165,7 +1165,7 @@ A row of icon buttons that **changes entirely** based on which tab is selected. 
 5. **Analysis**: Script Analysis, Script Activity
 
 ### Plugins tab
-Shows installed Studio plugins. After a **thicker separator line**, third-party plugins appear (e.g., Rojo, RbxSync installed by Roxlit). Studio uses this visual separator to distinguish built-in tools from community/user-installed plugins.
+Shows installed Studio plugins. After a **thicker separator line**, third-party plugins appear (e.g., Rojo, Roxlit installed by the launcher). Studio uses this visual separator to distinguish built-in tools from community/user-installed plugins.
 
 ## How to Open Key Panels
 
@@ -1235,9 +1235,9 @@ Play/Test controls are **always visible** on the left side of the mezzanine, no 
 3. If "Not Connected": click the Rojo button to reconnect
 4. If the Rojo plugin doesn't appear: **restart Studio** (plugins load on startup only)
 
-### "Instance sync (RbxSync) isn't working"
-1. RbxSync plugin needs manual activation each session: **Plugins tab → after the thick separator → RbxSync → Sync/Connect**
-2. Roxlit must be running `rbxsync serve` (check the launcher)
+### "Roxlit MCP isn't working"
+1. Roxlit plugin needs manual activation each session: **Plugins tab → after the thick separator → Roxlit → Sync/Connect**
+2. Roxlit must be running (check the launcher)
 3. If plugin doesn't appear: restart Studio
 "#
 }

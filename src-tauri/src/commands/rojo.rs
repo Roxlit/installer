@@ -55,78 +55,6 @@ impl RojoProcess {
     }
 }
 
-/// Managed state holding the embedded rbxsync server (needed for MCP).
-///
-/// Runs rbxsync-server as a tokio task in-process — no external binary needed.
-/// It just needs to be alive on port 44755 so that rbxsync-mcp can send commands
-/// to Studio via the rbxsync plugin.
-pub struct RbxSyncProcess {
-    handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-}
-
-impl Default for RbxSyncProcess {
-    fn default() -> Self {
-        Self {
-            handle: Arc::new(Mutex::new(None)),
-        }
-    }
-}
-
-impl RbxSyncProcess {
-    /// Kill the server synchronously (for window close handler).
-    pub fn kill_sync(&self) {
-        if let Ok(mut guard) = self.handle.try_lock() {
-            if let Some(handle) = guard.take() {
-                handle.abort();
-            }
-        }
-    }
-
-    /// Start rbxsync server as an embedded tokio task.
-    async fn start(&self, project_path: &str, log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) {
-        // Already running?
-        {
-            let guard = self.handle.lock().await;
-            if let Some(ref handle) = *guard {
-                if !handle.is_finished() {
-                    return; // Still running
-                }
-            }
-        }
-
-        let project_path = project_path.to_string();
-        let log_tx_clone = log_tx.cloned();
-
-        let handle = tokio::spawn(async move {
-            // Set CWD for handle_server_info (the only place rbxsync-server reads CWD)
-            let _ = std::env::set_current_dir(&project_path);
-
-            let config = rbxsync_server::ServerConfig {
-                port: 44755,
-                ..Default::default()
-            };
-
-            if let Some(ref tx) = log_tx_clone {
-                send_log(tx, "roxlit", "rbxsync server started (embedded, port 44755)");
-            }
-
-            if let Err(e) = rbxsync_server::run_server(config).await {
-                if let Some(ref tx) = log_tx_clone {
-                    send_log(tx, "roxlit", &format!("rbxsync server error: {e}"));
-                }
-            }
-        });
-
-        *self.handle.lock().await = Some(handle);
-    }
-
-    /// Stop the embedded rbxsync server.
-    async fn stop(&self) {
-        if let Some(handle) = self.handle.lock().await.take() {
-            handle.abort();
-        }
-    }
-}
 
 /// Resolve the rojo binary path (aftman installs to ~/.aftman/bin/).
 fn rojo_bin_path() -> String {
@@ -150,7 +78,6 @@ pub async fn start_rojo(
     project_path: String,
     on_event: Channel<RojoEvent>,
     state: tauri::State<'_, RojoProcess>,
-    rbxsync_state: tauri::State<'_, RbxSyncProcess>,
     logger_state: tauri::State<'_, LoggerState>,
     log_server_state: tauri::State<'_, LogServerState>,
     launcher_status: tauri::State<'_, LauncherStatus>,
@@ -228,33 +155,9 @@ pub async fn start_rojo(
         let _ = std::fs::write(&luaurc, crate::templates::luaurc());
     }
 
-    // Ensure rbxsync.json exists
-    let rbxsync_json = project_dir.join("rbxsync.json");
-    if !rbxsync_json.exists() {
-        let name = project_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("my-game");
-        let _ = std::fs::write(&rbxsync_json, crate::templates::rbxsync_json(name));
-    }
-
-    // Ensure .rbxsyncignore exists and includes src/
-    let rbxsyncignore = project_dir.join(".rbxsyncignore");
-    if rbxsyncignore.exists() {
-        if let Ok(content) = std::fs::read_to_string(&rbxsyncignore) {
-            if !content.contains("src/") {
-                let _ = std::fs::write(
-                    &rbxsyncignore,
-                    format!("{}src/\n", content),
-                );
-            }
-        }
-    } else {
-        let _ = std::fs::write(
-            &rbxsyncignore,
-            ".git/\n.roxlit/\n.claude/\n.cursor/\n.vscode/\n.windsurf/\n.github/\nnode_modules/\nsrc/\n",
-        );
-    }
+    // Clean up legacy rbxsync files (no longer needed)
+    let _ = std::fs::remove_file(project_dir.join("rbxsync.json"));
+    let _ = std::fs::remove_file(project_dir.join(".rbxsyncignore"));
 
     // Ensure MCP binary exists (download if missing)
     ensure_mcp_binary().await;
@@ -312,11 +215,8 @@ pub async fn start_rojo(
         }
     }
 
-    // Kill any orphaned rbxsync process from a previous version that used external binary
-    kill_orphaned_rbxsync().await;
-
-    // Start embedded rbxsync server (needed for MCP tools: run_code, run_test, etc.)
-    rbxsync_state.start(&project_path, log_sender.as_ref()).await;
+    // Kill any orphaned roxlit-mcp/rbxsync process from a previous version that used external binary
+    kill_orphaned_roxlit_mcp().await;
 
     // Auto-open Studio if a placeId is linked to this project
     auto_open_studio(&project_path, log_sender.as_ref()).await;
@@ -435,7 +335,6 @@ pub async fn start_rojo(
 #[tauri::command]
 pub async fn stop_rojo(
     state: tauri::State<'_, RojoProcess>,
-    rbxsync_state: tauri::State<'_, RbxSyncProcess>,
     log_server_state: tauri::State<'_, LogServerState>,
     launcher_status: tauri::State<'_, LauncherStatus>,
 ) -> Result<()> {
@@ -475,9 +374,6 @@ pub async fn stop_rojo(
             handle.abort();
         }
     }
-
-    // Stop rbxsync serve
-    rbxsync_state.stop().await;
 
     // Stop the Studio log HTTP server
     log_server_state.stop().await;
@@ -567,7 +463,7 @@ fn has_luau_files(dir: &std::path::Path) -> bool {
 }
 
 /// Move .luau and .model.json files from scripts/ to src/, preserving directory structure.
-/// Handles migration from the legacy layout where Rojo used scripts/ to avoid conflicting with rbxsync's src/.
+/// Handles migration from the legacy layout where Rojo used scripts/ to avoid conflicting with the old sync tool's src/.
 fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
     if let Ok(entries) = std::fs::read_dir(src) {
         for entry in entries.flatten() {
@@ -592,13 +488,13 @@ fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
     }
 }
 
-/// Download rbxsync-mcp binary if it doesn't exist yet.
+/// Download roxlit-mcp binary if it doesn't exist yet.
 /// This handles upgrades from versions that didn't include MCP.
 async fn ensure_mcp_binary() {
     let mcp_bin_name = if cfg!(target_os = "windows") {
-        "rbxsync-mcp.exe"
+        "roxlit-mcp.exe"
     } else {
-        "rbxsync-mcp"
+        "roxlit-mcp"
     };
 
     let bin_dir = match dirs::home_dir() {
@@ -612,12 +508,10 @@ async fn ensure_mcp_binary() {
     }
 
     // Determine download URL
-    let url = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        "https://github.com/Smokestack-Games/rbxsync/releases/download/v1.3.0/rbxsync-mcp-macos-arm64".to_string()
-    } else if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-        "https://github.com/Roxlit/installer/releases/latest/download/rbxsync-mcp.exe".to_string()
+    let url = if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+        "https://github.com/Roxlit/installer/releases/latest/download/roxlit-mcp.exe".to_string()
     } else {
-        return; // No MCP for this platform
+        return; // No MCP for this platform yet
     };
 
     // Best-effort download — don't block launcher startup if it fails
@@ -638,6 +532,10 @@ async fn ensure_mcp_binary() {
             }
         }
     }
+
+    // Clean up old rbxsync-mcp binary if it exists
+    let old_mcp = bin_dir.join(if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" });
+    let _ = tokio::fs::remove_file(&old_mcp).await;
 }
 
 /// Ensure AI context files exist and are up to date.
@@ -664,7 +562,7 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
         .find(|p| p.exists());
 
     // Check if MCP binary is available (for context variant detection)
-    let mcp_bin_name = if cfg!(target_os = "windows") { "rbxsync-mcp.exe" } else { "rbxsync-mcp" };
+    let mcp_bin_name = if cfg!(target_os = "windows") { "roxlit-mcp.exe" } else { "roxlit-mcp" };
     let mcp_available = dirs::home_dir()
         .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name).exists())
         .unwrap_or(false);
@@ -688,8 +586,10 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
                 Some(v) => v != templates::CONTEXT_VERSION,
             };
             // Also regenerate if MCP is now available but context was generated without it
-            let mcp_missing_from_context = mcp_available && !content.contains("RbxSync MCP server");
-            version_stale || mcp_missing_from_context
+            let mcp_missing_from_context = mcp_available && !content.contains("Roxlit MCP server");
+            // Also regenerate if still referencing old rbxsync names
+            let has_old_rbxsync = content.contains("RbxSync MCP server") || content.contains("rbxsync");
+            version_stale || mcp_missing_from_context || has_old_rbxsync
         }
     };
 
@@ -746,9 +646,9 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
 /// This handles the case where a user upgrades Roxlit and gets MCP for the first time.
 fn ensure_mcp_config(project_dir: &std::path::Path, ai_tool: &str) {
     let mcp_bin_name = if cfg!(target_os = "windows") {
-        "rbxsync-mcp.exe"
+        "roxlit-mcp.exe"
     } else {
-        "rbxsync-mcp"
+        "roxlit-mcp"
     };
 
     let mcp_available = dirs::home_dir()
@@ -771,12 +671,10 @@ fn ensure_mcp_config(project_dir: &std::path::Path, ai_tool: &str) {
 
     if let Some(ref path) = config_path {
         if path.exists() {
-            // Regenerate if the existing config has Windows backslashes in paths
-            // (bug: \b = backspace and \r = carriage return in JSON, corrupts the file).
-            let has_backslash_bug = std::fs::read_to_string(path)
-                .map(|c| c.contains(".roxlit\\"))
-                .unwrap_or(false);
-            if !has_backslash_bug {
+            let content = std::fs::read_to_string(path).unwrap_or_default();
+            // Regenerate if: Windows backslash bug OR still references old rbxsync names
+            let needs_regen = content.contains(".roxlit\\") || content.contains("rbxsync");
+            if !needs_regen {
                 return;
             }
         }
@@ -827,7 +725,7 @@ fn ensure_roxlit_plugin() {
     let _ = std::fs::create_dir_all(&plugins_dir);
 
     // Clean up old plugins that the unified Roxlit plugin replaces
-    for old_name in &["RoxlitDebug.rbxm", "RoxlitDebug.rbxmx", "RbxSync.rbxm"] {
+    for old_name in &["RoxlitDebug.rbxm", "RoxlitDebug.rbxmx", "RbxSync.rbxm", "rbxsync.rbxm"] {
         let old_path = plugins_dir.join(old_name);
         if old_path.exists() {
             let _ = std::fs::remove_file(&old_path);
@@ -835,21 +733,34 @@ fn ensure_roxlit_plugin() {
     }
 }
 
-/// Kill orphaned rbxsync processes from a previous session that may still hold port 44755.
+/// Kill orphaned roxlit-mcp/rbxsync processes from a previous session that may still hold port 44755.
 /// Users upgrading from versions that used the external binary may have a leftover process.
-async fn kill_orphaned_rbxsync() {
+async fn kill_orphaned_roxlit_mcp() {
     #[cfg(target_os = "windows")]
     {
+        // Kill old rbxsync processes (legacy)
         let mut cmd = tokio::process::Command::new("taskkill");
         cmd.args(["/F", "/IM", "rbxsync.exe"])
+            .creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.output().await;
+
+        // Kill roxlit-mcp processes
+        let mut cmd = tokio::process::Command::new("taskkill");
+        cmd.args(["/F", "/IM", "roxlit-mcp.exe"])
             .creation_flags(0x08000000); // CREATE_NO_WINDOW
         let _ = cmd.output().await;
     }
 
     #[cfg(not(target_os = "windows"))]
     {
+        // Kill old rbxsync processes (legacy)
         let mut cmd = tokio::process::Command::new("pkill");
         cmd.args(["-f", "rbxsync serve"]);
+        let _ = cmd.output().await;
+
+        // Kill roxlit-mcp processes
+        let mut cmd = tokio::process::Command::new("pkill");
+        cmd.args(["-f", "roxlit-mcp serve"]);
         let _ = cmd.output().await;
     }
 

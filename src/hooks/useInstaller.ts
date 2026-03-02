@@ -134,7 +134,7 @@ export function useInstaller() {
       projectName: state.projectName,
       skipAftman: state.detection.aftmanInstalled,
       skipRojo: state.detection.rojoInstalled,
-      skipRbxsync: state.detection.rbxsyncInstalled || state.detection.os === "linux",
+      skipRoxlitMcp: state.detection.roxlitMcpInstalled || state.detection.os === "linux",
       pluginsPath: state.detection.studioPluginsPath,
     };
 
