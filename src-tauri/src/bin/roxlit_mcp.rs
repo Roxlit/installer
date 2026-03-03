@@ -100,6 +100,47 @@ fn handle_tools_list(id: Value) -> Value {
                         },
                         "required": ["code"]
                     }
+                },
+                {
+                    "name": "get_logs",
+                    "description": "Read logs from a Roxlit session. Two sources: 'output' (default) for Studio game output (prints, warns, errors from user scripts — use this to debug the user's game), or 'system' for Roxlit infrastructure logs (rojo, mcp events). Use 'latest' for the current session or a session_id from list_sessions. Use tail to get only the last N lines.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the Rojo project directory"
+                            },
+                            "source": {
+                                "type": "string",
+                                "enum": ["output", "system"],
+                                "description": "Which log to read: 'output' (default) for Studio game output, 'system' for Roxlit infrastructure"
+                            },
+                            "session": {
+                                "type": "string",
+                                "description": "Session to read: 'latest' (default) or a session_id from list_sessions"
+                            },
+                            "tail": {
+                                "type": "integer",
+                                "description": "Only return the last N lines (0 or omitted = all lines)"
+                            }
+                        },
+                        "required": ["project_path"]
+                    }
+                },
+                {
+                    "name": "list_sessions",
+                    "description": "List available Roxlit log sessions for a project. Returns session metadata (ID, start time, project name). Use the session_id with get_logs to read a specific session's logs.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the Rojo project directory"
+                            }
+                        },
+                        "required": ["project_path"]
+                    }
                 }
             ]
         }
@@ -112,6 +153,8 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
 
     match tool_name {
         "run_code" => tool_run_code(id, &arguments),
+        "get_logs" => tool_get_logs(id, &arguments),
+        "list_sessions" => tool_list_sessions(id, &arguments),
         _ => json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -225,4 +268,143 @@ fn tool_run_code(id: Value, arguments: &Value) -> Value {
             })
         }
     }
+}
+
+fn tool_get_logs(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => {
+            return mcp_error_result(id, "'project_path' parameter is required");
+        }
+    };
+
+    let source = arguments["source"].as_str().unwrap_or("output");
+    let session = arguments["session"].as_str().unwrap_or("latest");
+    let tail = arguments["tail"].as_u64().unwrap_or(0) as usize;
+
+    let logs_dir = std::path::Path::new(project_path)
+        .join(".roxlit")
+        .join("logs");
+
+    let filename = match source {
+        "system" => "system.log",
+        _ => "output.log",
+    };
+
+    let log_file = if session == "latest" {
+        logs_dir.join(filename)
+    } else {
+        logs_dir.join(format!("{session}-{filename}"))
+    };
+
+    if !log_file.exists() {
+        return mcp_error_result(id, &format!("No log file found at {}", log_file.display()));
+    }
+
+    let content = match std::fs::read_to_string(&log_file) {
+        Ok(c) => c,
+        Err(e) => {
+            return mcp_error_result(id, &format!("Error reading log file: {e}"));
+        }
+    };
+
+    let output = if tail > 0 {
+        let lines: Vec<&str> = content.lines().collect();
+        let start = lines.len().saturating_sub(tail);
+        lines[start..].join("\n")
+    } else {
+        content
+    };
+
+    // Truncate if extremely large to avoid flooding the AI context
+    let output = if output.len() > 100_000 {
+        let truncated = &output[output.len() - 100_000..];
+        format!("[...truncated, showing last ~100KB...]\n{truncated}")
+    } else {
+        output
+    };
+
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "content": [{ "type": "text", "text": output }],
+            "isError": false
+        }
+    })
+}
+
+fn tool_list_sessions(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => {
+            return mcp_error_result(id, "'project_path' parameter is required");
+        }
+    };
+
+    let logs_dir = std::path::Path::new(project_path)
+        .join(".roxlit")
+        .join("logs");
+    let manifest = logs_dir.join("sessions.jsonl");
+
+    if !manifest.exists() {
+        return json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "content": [{ "type": "text", "text": "No sessions found. Start development in the Roxlit launcher first." }],
+                "isError": false
+            }
+        });
+    }
+
+    let content = match std::fs::read_to_string(&manifest) {
+        Ok(c) => c,
+        Err(e) => {
+            return mcp_error_result(id, &format!("Error reading sessions manifest: {e}"));
+        }
+    };
+
+    let mut sessions = Vec::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(mut entry) = serde_json::from_str::<Value>(line) {
+            if let Some(session_id) = entry["session_id"].as_u64() {
+                let rotated_output = logs_dir.join(format!("{session_id}-output.log"));
+                let is_current = !rotated_output.exists() && logs_dir.join("output.log").exists();
+                entry["is_current"] = json!(is_current);
+                entry["has_output"] = json!(is_current || rotated_output.exists());
+                entry["has_system"] = json!(
+                    (is_current && logs_dir.join("system.log").exists())
+                    || logs_dir.join(format!("{session_id}-system.log")).exists()
+                );
+            }
+            sessions.push(entry);
+        }
+    }
+
+    let output = serde_json::to_string_pretty(&sessions).unwrap_or_default();
+
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "content": [{ "type": "text", "text": output }],
+            "isError": false
+        }
+    })
+}
+
+/// Helper for MCP tool error responses.
+fn mcp_error_result(id: Value, message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "content": [{ "type": "text", "text": format!("Error: {message}") }],
+            "isError": true
+        }
+    })
 }

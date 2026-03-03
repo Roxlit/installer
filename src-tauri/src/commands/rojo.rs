@@ -189,29 +189,34 @@ pub async fn start_rojo(
         }
     }
 
-    // Initialize session logger (creates .roxlit/logs/, rotates previous log)
-    let log_sender = {
-        let mut guard = logger_state.logger.lock().await;
-        if guard.is_none() {
-            *guard = SessionLogger::new(&project_path).await;
-        }
-        guard.as_ref().map(|l| l.sender())
-    };
-
-    // Mark launcher as active so the Studio plugin can auto-connect
+    // Extract project name for logger and launcher status
     let project_name = std::path::Path::new(&project_path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("project");
+
+    // Initialize session logger (creates .roxlit/logs/, rotates previous log)
+    let (system_sender, output_sender) = {
+        let mut guard = logger_state.logger.lock().await;
+        if guard.is_none() {
+            *guard = SessionLogger::new(&project_path, project_name).await;
+        }
+        match guard.as_ref() {
+            Some(l) => (Some(l.system_sender()), Some(l.output_sender())),
+            None => (None, None),
+        }
+    };
+
+    // Mark launcher as active so the Studio plugin can auto-connect
     launcher_status.set_active(&project_path, project_name).await;
 
     // Start the HTTP log server for Studio output capture + /status + MCP relay
-    if let Some(ref tx) = log_sender {
+    if let (Some(ref sys_tx), Some(ref out_tx)) = (&system_sender, &output_sender) {
         let shared_status = launcher_status.shared();
         let shared_mcp = mcp_state.shared();
-        if let Some(handle) = crate::commands::logs::start_log_server(tx.clone(), shared_status, shared_mcp).await {
+        if let Some(handle) = crate::commands::logs::start_log_server(sys_tx.clone(), out_tx.clone(), shared_status, shared_mcp).await {
             log_server_state.set_handle(handle).await;
-            send_log(tx, "roxlit", "Studio log server started on 127.0.0.1:19556");
+            send_log(sys_tx, "roxlit", "Studio log server started on 127.0.0.1:19556");
         }
     }
 
@@ -219,7 +224,7 @@ pub async fn start_rojo(
     kill_orphaned_roxlit_mcp().await;
 
     // Auto-open Studio if a placeId is linked to this project
-    auto_open_studio(&project_path, log_sender.as_ref()).await;
+    auto_open_studio(&project_path, system_sender.as_ref()).await;
 
     // Start rojo serve
     let mut cmd = tokio::process::Command::new(&rojo);
@@ -249,7 +254,7 @@ pub async fn start_rojo(
     let launcher_status_shared = launcher_status.shared();
 
     // Read stdout and stream events
-    let stdout_log_tx = log_sender.clone();
+    let stdout_log_tx = system_sender.clone();
     let reader_handle = tokio::spawn(async move {
         let mut port_detected = false;
 
@@ -304,7 +309,7 @@ pub async fn start_rojo(
 
     // Stderr reader
     let event_stderr = on_event;
-    let stderr_log_tx = log_sender;
+    let stderr_log_tx = system_sender;
     if let Some(stderr) = stderr {
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);

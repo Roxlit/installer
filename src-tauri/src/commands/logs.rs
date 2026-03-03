@@ -122,22 +122,25 @@ impl Default for LoggerState {
     }
 }
 
-/// Async session logger that writes timestamped lines to `.roxlit/logs/latest.log`.
+/// Async session logger that writes to two separate log files:
+/// - `system.log` — Roxlit infrastructure (rojo, roxlit, mcp events)
+/// - `output.log` — Studio game output (prints, warns, errors from user scripts)
 ///
-/// Uses an mpsc channel so callers never block on disk I/O — `log()` just sends
-/// through the channel, and a background task does the actual writing.
+/// Uses mpsc channels so callers never block on disk I/O.
 pub struct SessionLogger {
-    tx: mpsc::UnboundedSender<String>,
+    system_tx: mpsc::UnboundedSender<String>,
+    output_tx: mpsc::UnboundedSender<String>,
 }
 
 impl SessionLogger {
     /// Create a new session logger for the given project.
     ///
     /// - Creates `.roxlit/logs/` if it doesn't exist
-    /// - Rotates `latest.log` → `session-{timestamp}.log`
+    /// - Rotates previous `system.log`/`output.log` → `{ts}-system.log`/`{ts}-output.log`
+    /// - Writes session entry to `sessions.jsonl` manifest
     /// - Cleans up old sessions (keeps max 10)
-    /// - Spawns a background writer task
-    pub async fn new(project_path: &str) -> Option<Self> {
+    /// - Spawns background writer tasks for both files
+    pub async fn new(project_path: &str, project_name: &str) -> Option<Self> {
         let logs_dir = std::path::Path::new(project_path)
             .join(".roxlit")
             .join("logs");
@@ -146,57 +149,97 @@ impl SessionLogger {
             return None;
         }
 
-        let latest = logs_dir.join("latest.log");
+        let ts = unix_timestamp();
 
-        // Rotate previous latest.log to session-{timestamp}.log
+        // Rotate previous log files
+        let system_file = logs_dir.join("system.log");
+        let output_file = logs_dir.join("output.log");
+        if system_file.exists() {
+            let rotated = logs_dir.join(format!("{ts}-system.log"));
+            let _ = tokio::fs::rename(&system_file, &rotated).await;
+        }
+        if output_file.exists() {
+            let rotated = logs_dir.join(format!("{ts}-output.log"));
+            let _ = tokio::fs::rename(&output_file, &rotated).await;
+        }
+        // Also rotate legacy latest.log if present
+        let latest = logs_dir.join("latest.log");
         if latest.exists() {
-            let ts = unix_timestamp();
-            let rotated = logs_dir.join(format!("session-{ts}.log"));
-            let _ = tokio::fs::rename(&latest, &rotated).await;
+            let rotated = logs_dir.join(format!("{ts}-system.log"));
+            if !rotated.exists() {
+                let _ = tokio::fs::rename(&latest, &rotated).await;
+            } else {
+                let _ = tokio::fs::remove_file(&latest).await;
+            }
         }
 
         // Clean up old sessions (keep max 10)
         cleanup_old_sessions(&logs_dir).await;
 
-        // Open latest.log for writing
-        let file = match tokio::fs::OpenOptions::new()
+        // Write session manifest entry
+        let session_id = unix_timestamp();
+        append_session_manifest(&logs_dir, session_id, project_name, project_path);
+
+        // Open system.log
+        let sys_file = match tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&latest)
+            .open(&system_file)
             .await
         {
             Ok(f) => f,
             Err(_) => return None,
         };
 
-        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        // Open output.log
+        let out_file = match tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&output_file)
+            .await
+        {
+            Ok(f) => f,
+            Err(_) => return None,
+        };
 
-        // Spawn writer task
-        tokio::spawn(writer_task(file, rx));
+        let (system_tx, system_rx) = mpsc::unbounded_channel::<String>();
+        let (output_tx, output_rx) = mpsc::unbounded_channel::<String>();
 
-        // Write header
+        tokio::spawn(writer_task(sys_file, system_rx));
+        tokio::spawn(output_writer_task(out_file, logs_dir.clone(), output_rx));
+
+        // Write headers
         let header = format!(
             "=== Roxlit Session — {} ===\n\n",
             format_timestamp(unix_timestamp())
         );
-        let _ = tx.send(header);
+        let _ = system_tx.send(header.clone());
+        let _ = output_tx.send(header);
 
-        Some(Self { tx })
+        Some(Self { system_tx, output_tx })
     }
 
-    /// Clone the sender so reader tasks can log without holding a lock.
-    pub fn sender(&self) -> mpsc::UnboundedSender<String> {
-        self.tx.clone()
+    /// Clone the system log sender (for rojo, roxlit, mcp events).
+    pub fn system_sender(&self) -> mpsc::UnboundedSender<String> {
+        self.system_tx.clone()
+    }
+
+    /// Clone the output log sender (for Studio game output).
+    pub fn output_sender(&self) -> mpsc::UnboundedSender<String> {
+        self.output_tx.clone()
     }
 }
 
-/// Format a pre-formatted log line and send it through a sender.
+/// Format a log line with short timestamp and send it through a sender.
 /// Convenience for reader tasks that already have a cloned sender.
 pub fn send_log(tx: &mpsc::UnboundedSender<String>, prefix: &str, line: &str) {
-    let ts = format_timestamp(unix_timestamp());
-    let formatted = format!("[{ts}] [{prefix}] {line}\n");
+    let ts = format_time_short(unix_timestamp());
+    let formatted = format!("{ts} [{prefix}] {line}\n");
     let _ = tx.send(formatted);
 }
+
+/// Sentinel value sent through the output channel to trigger log rotation.
+const ROTATE_SENTINEL: &str = "\0ROTATE";
 
 /// Background task that receives lines from the channel and writes to disk.
 async fn writer_task(file: tokio::fs::File, mut rx: mpsc::UnboundedReceiver<String>) {
@@ -205,11 +248,77 @@ async fn writer_task(file: tokio::fs::File, mut rx: mpsc::UnboundedReceiver<Stri
 
     while let Some(line) = rx.recv().await {
         let _ = writer.write_all(line.as_bytes()).await;
-        // Flush periodically so logs are readable in real-time
         let _ = writer.flush().await;
     }
 
-    // Channel closed — write footer
+    let footer = format!(
+        "\n=== Session ended — {} ===\n",
+        format_timestamp(unix_timestamp())
+    );
+    let _ = writer.write_all(footer.as_bytes()).await;
+    let _ = writer.flush().await;
+}
+
+/// Background writer for output.log that supports mid-session rotation.
+/// When it receives ROTATE_SENTINEL, it closes the current file, renames it
+/// to {timestamp}-output.log, and opens a fresh output.log.
+async fn output_writer_task(
+    file: tokio::fs::File,
+    logs_dir: std::path::PathBuf,
+    mut rx: mpsc::UnboundedReceiver<String>,
+) {
+    use tokio::io::AsyncWriteExt;
+    let mut writer = tokio::io::BufWriter::new(file);
+
+    while let Some(line) = rx.recv().await {
+        if line == ROTATE_SENTINEL {
+            // Flush and close current file
+            let _ = writer.flush().await;
+            drop(writer);
+
+            let output_path = logs_dir.join("output.log");
+
+            let ts = unix_timestamp();
+
+            // Only rotate if the file has real content (not just headers)
+            let has_content = tokio::fs::metadata(&output_path)
+                .await
+                .map(|m| m.len() > 100) // headers alone are ~60 bytes
+                .unwrap_or(false);
+
+            if has_content {
+                let rotated = logs_dir.join(format!("{ts}-output.log"));
+                let _ = tokio::fs::rename(&output_path, &rotated).await;
+            } else {
+                let _ = tokio::fs::remove_file(&output_path).await;
+            }
+
+            // Open fresh output.log
+            let new_file = match tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&output_path)
+                .await
+            {
+                Ok(f) => f,
+                Err(_) => return, // Can't continue without a file
+            };
+            writer = tokio::io::BufWriter::new(new_file);
+
+            // Write playtest header
+            let header = format!(
+                "\n=== Playtest — {} ===\n\n",
+                format_timestamp(ts)
+            );
+            let _ = writer.write_all(header.as_bytes()).await;
+            let _ = writer.flush().await;
+            continue;
+        }
+
+        let _ = writer.write_all(line.as_bytes()).await;
+        let _ = writer.flush().await;
+    }
+
     let footer = format!(
         "\n=== Session ended — {} ===\n",
         format_timestamp(unix_timestamp())
@@ -271,6 +380,15 @@ fn is_leap(y: i64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
+/// Format a Unix timestamp as short time "HH:MM:SS" (UTC).
+fn format_time_short(secs: u64) -> String {
+    let s = secs as i64;
+    let sec = s % 60;
+    let min = (s / 60) % 60;
+    let hour = (s / 3600) % 24;
+    format!("{hour:02}:{min:02}:{sec:02}")
+}
+
 /// Managed Tauri state for the Studio log HTTP server.
 pub struct LogServerState {
     handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
@@ -315,10 +433,11 @@ impl LogServerState {
 /// The server accepts these endpoints:
 /// - `GET /health` → responds `200 ok`
 /// - `GET /status` → JSON with launcher active state, project info
-/// - `POST /log` → parses a JSON batch of `{message, level, timestamp}` and writes to the session log
+/// - `POST /log` → parses a JSON batch of `{message, level, timestamp}` and writes to output.log
 /// - `POST /link-place` → receives `{placeId, placeName}` from Studio plugin
 pub async fn start_log_server(
-    log_tx: mpsc::UnboundedSender<String>,
+    system_tx: mpsc::UnboundedSender<String>,
+    output_tx: mpsc::UnboundedSender<String>,
     status: Arc<Mutex<LauncherStatusInner>>,
     mcp: Arc<Mutex<McpStateInner>>,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -331,11 +450,12 @@ pub async fn start_log_server(
                 Err(_) => continue,
             };
 
-            let tx = log_tx.clone();
+            let sys_tx = system_tx.clone();
+            let out_tx = output_tx.clone();
             let status = status.clone();
             let mcp = mcp.clone();
             tokio::spawn(async move {
-                handle_connection(stream, tx, status, mcp).await;
+                handle_connection(stream, sys_tx, out_tx, status, mcp).await;
             });
         }
     });
@@ -346,7 +466,8 @@ pub async fn start_log_server(
 /// Handle a single TCP connection with minimal HTTP parsing.
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
-    tx: mpsc::UnboundedSender<String>,
+    system_tx: mpsc::UnboundedSender<String>,
+    output_tx: mpsc::UnboundedSender<String>,
     status: Arc<Mutex<LauncherStatusInner>>,
     mcp: Arc<Mutex<McpStateInner>>,
 ) {
@@ -450,7 +571,7 @@ async fn handle_connection(
                 guard.linked_universe_id = universe_id;
                 guard.linked_place_name = place_name;
                 if let Some(id) = place_id {
-                    send_log(&tx, "roxlit", &format!("Studio linked placeId {id}"));
+                    send_log(&system_tx, "roxlit", &format!("Studio linked placeId {id}"));
                 }
             }
         }
@@ -459,11 +580,19 @@ async fn handle_connection(
         return;
     }
 
+    if first_line.starts_with("POST /playtest-start") {
+        // Tell the output writer to rotate: close current file, rename, open fresh
+        let _ = output_tx.send(ROTATE_SENTINEL.to_string());
+        send_log(&system_tx, "roxlit", "Playtest started — rotating output.log");
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
     if first_line.starts_with("POST /log") {
-        // Find the body (after \r\n\r\n)
         if let Some(body_start) = request.find("\r\n\r\n") {
             let body = &request[body_start + 4..];
-            process_log_batch(&tx, body);
+            process_log_batch(&output_tx, body);
         }
         let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
         let _ = stream.write_all(response.as_bytes()).await;
@@ -498,7 +627,7 @@ async fn handle_connection(
                     guard.result_sender = Some(result_tx);
                 }
 
-                send_log(&tx, "mcp", &format!("Queued run_code command {id}"));
+                send_log(&system_tx, "mcp", &format!("Queued run_code command {id}"));
 
                 // Wait for result with 30s timeout
                 let result = tokio::time::timeout(
@@ -576,7 +705,7 @@ async fn handle_connection(
                 let result = val["result"].as_str().unwrap_or("").to_string();
                 let id = val["id"].as_str().unwrap_or("?");
 
-                send_log(&tx, "mcp", &format!("Result for command {id}: success={success}"));
+                send_log(&system_tx, "mcp", &format!("Result for command {id}: success={success}"));
 
                 // Deliver the result to the waiting POST /mcp/run-code caller
                 let mut guard = mcp.lock().await;
@@ -603,51 +732,152 @@ async fn handle_connection(
 
 /// Parse a JSON array of log entries and write each to the session log.
 /// Expected format: `[{"message": "...", "level": "info|warn|error", "timestamp": 0.0}]`
+///
+/// Studio logs use a clean format: just timestamp + message for normal output,
+/// with [ERROR] or [WARN] prefix only for errors/warnings.
 fn process_log_batch(tx: &mpsc::UnboundedSender<String>, body: &str) {
-    // Minimal JSON parsing — we use serde_json which is already a dependency
     let entries: Vec<serde_json::Value> = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return,
     };
 
+    let ts = format_time_short(unix_timestamp());
     for entry in &entries {
         let message = entry["message"].as_str().unwrap_or("");
         let level = entry["level"].as_str().unwrap_or("info");
 
-        let prefix = match level {
-            "error" => "studio-err",
-            "warn" => "studio-warn",
-            _ => "studio",
+        let formatted = match level {
+            "error" => format!("{ts} [ERROR] {message}\n"),
+            "warn" => format!("{ts} [WARN] {message}\n"),
+            _ => format!("{ts} {message}\n"),
         };
-
-        send_log(tx, prefix, message);
+        let _ = tx.send(formatted);
     }
 }
 
-/// Keep only the 10 most recent `session-*.log` files.
+/// Delete rotated log files older than 7 days. Also cleans up legacy `session-*.log` files.
 async fn cleanup_old_sessions(logs_dir: &std::path::Path) {
     let mut entries = match tokio::fs::read_dir(logs_dir).await {
         Ok(rd) => rd,
         Err(_) => return,
     };
 
-    let mut session_files: Vec<std::path::PathBuf> = Vec::new();
+    let seven_days = std::time::Duration::from_secs(7 * 24 * 3600);
+    let now = std::time::SystemTime::now();
+    let mut kept_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with("session-") && name_str.ends_with(".log") {
-            session_files.push(entry.path());
+        let name_str = name.to_string_lossy().to_string();
+
+        // Skip active files
+        if name_str == "system.log" || name_str == "output.log" || name_str == "sessions.jsonl" {
+            continue;
+        }
+
+        let is_log = name_str.ends_with("-system.log")
+            || name_str.ends_with("-output.log")
+            || (name_str.starts_with("session-") && name_str.ends_with(".log"))
+            || name_str == "latest.log";
+
+        if !is_log {
+            continue;
+        }
+
+        // Check file age
+        let too_old = entry
+            .metadata()
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .map(|age| age > seven_days)
+            .unwrap_or(false);
+
+        if too_old || name_str.starts_with("session-") || name_str == "latest.log" {
+            // Delete old files + all legacy format files
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        } else {
+            // Track kept session IDs for manifest cleanup
+            let ts = name_str.split('-').next().unwrap_or("");
+            if !ts.is_empty() && ts.chars().all(|c| c.is_ascii_digit()) {
+                kept_ids.insert(ts.to_string());
+            }
         }
     }
 
-    // Sort by name (timestamp is embedded, so lexicographic = chronological)
-    session_files.sort();
+    // Clean up manifest
+    let kept_refs: std::collections::HashSet<&str> = kept_ids.iter().map(|s| s.as_str()).collect();
+    cleanup_session_manifest(logs_dir, &kept_refs).await;
+}
 
-    // Remove oldest files until we have at most 10
-    while session_files.len() > 10 {
-        if let Some(oldest) = session_files.first() {
-            let _ = tokio::fs::remove_file(oldest).await;
-        }
-        session_files.remove(0);
+/// Append a session entry to the `sessions.jsonl` manifest.
+fn append_session_manifest(
+    logs_dir: &std::path::Path,
+    session_id: u64,
+    project_name: &str,
+    project_path: &str,
+) {
+    let manifest = logs_dir.join("sessions.jsonl");
+    let started_at = format_timestamp(session_id);
+
+    let entry = serde_json::json!({
+        "session_id": session_id,
+        "started_at": started_at,
+        "project_name": project_name,
+        "project_path": project_path,
+    });
+
+    let mut line = serde_json::to_string(&entry).unwrap_or_default();
+    line.push('\n');
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&manifest)
+    {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
     }
+}
+
+/// Remove manifest entries whose session files no longer exist.
+async fn cleanup_session_manifest(
+    logs_dir: &std::path::Path,
+    keep_ids: &std::collections::HashSet<&str>,
+) {
+    let manifest = logs_dir.join("sessions.jsonl");
+    if !manifest.exists() {
+        return;
+    }
+
+    let content = match tokio::fs::read_to_string(&manifest).await {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let mut kept = Vec::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(id) = entry["session_id"].as_u64() {
+                let id_str = id.to_string();
+                // Keep if it's in the retained set or is the current session (no rotated file yet)
+                let has_rotated = logs_dir.join(format!("{id}-system.log")).exists()
+                    || logs_dir.join(format!("{id}-output.log")).exists();
+                if keep_ids.contains(id_str.as_str()) || !has_rotated {
+                    kept.push(line.to_string());
+                }
+            }
+        }
+    }
+
+    let new_content = if kept.is_empty() {
+        String::new()
+    } else {
+        kept.join("\n") + "\n"
+    };
+    let _ = tokio::fs::write(&manifest, new_content).await;
 }
