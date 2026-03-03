@@ -187,6 +187,16 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 
 **Do NOT use MCP to create instances.** Write .model.json files instead — Rojo syncs them automatically.
 
+### MCP Connection Issues
+
+If `run_code` or other MCP tools fail with connection errors, tell the user:
+
+1. **Check Roxlit launcher** — it must be running with "Start Development" active
+2. **Reconnect MCP** — type `/mcp` in the chat, select `roxlit`, and click **Reconnect**. This restarts the MCP server process without losing your conversation.
+3. If reconnecting doesn't work, the user can restart their Claude Code session in the project folder.
+
+**Do NOT ask the user to restart Roblox Studio** — the MCP server (`roxlit-mcp`) is independent of Studio. It only needs the Roxlit launcher running.
+
 ### Debugging with MCP
 
 **The loop:** edit files → `run_test` → read output → fix → repeat
@@ -225,7 +235,7 @@ Roxlit captures Studio output automatically:
 
 1. **Make sure your scripts have Debug.print() calls** — without them, logs are empty
 2. Ask the user to playtest (F5 in Studio)
-3. Read `.roxlit/logs/output.log` — search `[ERROR]` for errors first, `[WARN]` for warnings
+3. Read `.roxlit/logs/output.log` with `tail` (last 50-100 lines) — search `[ERROR]` for errors first, `[WARN]` for warnings. **Do NOT read the entire file** — it can be thousands of lines.
 4. Read `.roxlit/logs/system.log` for Rojo/infrastructure issues
 5. If logs are empty: Roxlit plugin not loaded (restart Studio) or no Debug.print() calls
 6. Fallback: ask the user to check Output panel in Studio
@@ -550,13 +560,16 @@ end)
 
 ### Debugging Workflow
 
-1. **Read `.roxlit/logs/output.log` FIRST** — search `[ERROR]` for runtime errors, `[WARN]` for warnings
-2. Read `.roxlit/logs/system.log` for Rojo/infrastructure issues
-3. Follow `[ScriptName]` prints to trace execution flow
-4. If prints are missing, add more and ask the user to playtest again
-5. **Never guess** — always read the actual error before attempting a fix
-6. **When a fix doesn't work**: diagnose WHY before trying something else. Add Debug.print() calls around the problem area, ask the user to playtest, read the logs. Don't try a new approach until you understand what went wrong.
-7. **After 2 failed attempts**: STOP and do a thorough investigation. Read all relevant scripts, check all property values, trace the full execution path. Only then propose a new fix.
+1. **Use `get_logs` MCP tool FIRST** — call `get_logs` with `source: "output"` and `tail: 50` to read the last 50 lines. Do NOT read `.roxlit/logs/output.log` directly — it can be huge and wastes context.
+2. Search `[ERROR]` for runtime errors, `[WARN]` for warnings
+3. Use `get_logs` with `source: "system"` for Rojo/infrastructure issues
+4. Follow `[ScriptName]` prints to trace execution flow
+5. If prints are missing, add more and ask the user to playtest again
+6. **Never guess** — always read the actual error before attempting a fix
+7. **When a fix doesn't work**: diagnose WHY before trying something else. Add Debug.print() calls around the problem area, ask the user to playtest, read the logs. Don't try a new approach until you understand what went wrong.
+8. **After 2 failed attempts**: STOP and do a thorough investigation. Read all relevant scripts, check all property values, trace the full execution path. Only then propose a new fix.
+
+**IMPORTANT:** Never read `.roxlit/logs/output.log` or `.roxlit/logs/system.log` directly with the Read tool. Always use the `get_logs` MCP tool — it has a `tail` parameter to avoid flooding your context with thousands of lines.
 
 ## Roblox Context Packs
 
