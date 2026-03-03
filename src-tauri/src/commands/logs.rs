@@ -195,11 +195,11 @@ impl SessionLogger {
     }
 }
 
-/// Format a pre-formatted log line and send it through a sender.
+/// Format a log line with short timestamp and send it through a sender.
 /// Convenience for reader tasks that already have a cloned sender.
 pub fn send_log(tx: &mpsc::UnboundedSender<String>, prefix: &str, line: &str) {
-    let ts = format_timestamp(unix_timestamp());
-    let formatted = format!("[{ts}] [{prefix}] {line}\n");
+    let ts = format_time_short(unix_timestamp());
+    let formatted = format!("{ts} [{prefix}] {line}\n");
     let _ = tx.send(formatted);
 }
 
@@ -274,6 +274,15 @@ fn format_timestamp(secs: u64) -> String {
 
 fn is_leap(y: i64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+/// Format a Unix timestamp as short time "HH:MM:SS" (UTC).
+fn format_time_short(secs: u64) -> String {
+    let s = secs as i64;
+    let sec = s % 60;
+    let min = (s / 60) % 60;
+    let hour = (s / 3600) % 24;
+    format!("{hour:02}:{min:02}:{sec:02}")
 }
 
 /// Managed Tauri state for the Studio log HTTP server.
@@ -608,24 +617,26 @@ async fn handle_connection(
 
 /// Parse a JSON array of log entries and write each to the session log.
 /// Expected format: `[{"message": "...", "level": "info|warn|error", "timestamp": 0.0}]`
+///
+/// Studio logs use a clean format: just timestamp + message for normal output,
+/// with [ERROR] or [WARN] prefix only for errors/warnings.
 fn process_log_batch(tx: &mpsc::UnboundedSender<String>, body: &str) {
-    // Minimal JSON parsing — we use serde_json which is already a dependency
     let entries: Vec<serde_json::Value> = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return,
     };
 
+    let ts = format_time_short(unix_timestamp());
     for entry in &entries {
         let message = entry["message"].as_str().unwrap_or("");
         let level = entry["level"].as_str().unwrap_or("info");
 
-        let prefix = match level {
-            "error" => "studio-err",
-            "warn" => "studio-warn",
-            _ => "studio",
+        let formatted = match level {
+            "error" => format!("{ts} [ERROR] {message}\n"),
+            "warn" => format!("{ts} [WARN] {message}\n"),
+            _ => format!("{ts} {message}\n"),
         };
-
-        send_log(tx, prefix, message);
+        let _ = tx.send(formatted);
     }
 }
 
