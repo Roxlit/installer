@@ -1,6 +1,6 @@
 [package]
 name = "roxlit"
-version = "0.12.1"
+version = "0.12.2"
 description = "Roxlit — launcher for AI-powered Roblox development"
 authors = ["Roxlit"]
 edition = "2021"
