@@ -189,20 +189,22 @@ pub async fn start_rojo(
         }
     }
 
+    // Extract project name for logger and launcher status
+    let project_name = std::path::Path::new(&project_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project");
+
     // Initialize session logger (creates .roxlit/logs/, rotates previous log)
     let log_sender = {
         let mut guard = logger_state.logger.lock().await;
         if guard.is_none() {
-            *guard = SessionLogger::new(&project_path).await;
+            *guard = SessionLogger::new(&project_path, project_name).await;
         }
         guard.as_ref().map(|l| l.sender())
     };
 
     // Mark launcher as active so the Studio plugin can auto-connect
-    let project_name = std::path::Path::new(&project_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("project");
     launcher_status.set_active(&project_path, project_name).await;
 
     // Start the HTTP log server for Studio output capture + /status + MCP relay

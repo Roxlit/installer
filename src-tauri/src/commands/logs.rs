@@ -135,9 +135,10 @@ impl SessionLogger {
     ///
     /// - Creates `.roxlit/logs/` if it doesn't exist
     /// - Rotates `latest.log` → `session-{timestamp}.log`
+    /// - Writes session entry to `sessions.jsonl` manifest
     /// - Cleans up old sessions (keeps max 10)
     /// - Spawns a background writer task
-    pub async fn new(project_path: &str) -> Option<Self> {
+    pub async fn new(project_path: &str, project_name: &str) -> Option<Self> {
         let logs_dir = std::path::Path::new(project_path)
             .join(".roxlit")
             .join("logs");
@@ -157,6 +158,10 @@ impl SessionLogger {
 
         // Clean up old sessions (keep max 10)
         cleanup_old_sessions(&logs_dir).await;
+
+        // Write session manifest entry
+        let session_id = unix_timestamp();
+        append_session_manifest(&logs_dir, session_id, project_name, project_path);
 
         // Open latest.log for writing
         let file = match tokio::fs::OpenOptions::new()
@@ -650,4 +655,87 @@ async fn cleanup_old_sessions(logs_dir: &std::path::Path) {
         }
         session_files.remove(0);
     }
+
+    // Clean up manifest to match existing files
+    cleanup_session_manifest(logs_dir, &session_files).await;
+}
+
+/// Append a session entry to the `sessions.jsonl` manifest.
+fn append_session_manifest(
+    logs_dir: &std::path::Path,
+    session_id: u64,
+    project_name: &str,
+    project_path: &str,
+) {
+    let manifest = logs_dir.join("sessions.jsonl");
+    let started_at = format_timestamp(session_id);
+
+    let entry = serde_json::json!({
+        "session_id": session_id,
+        "started_at": started_at,
+        "project_name": project_name,
+        "project_path": project_path,
+    });
+
+    let mut line = serde_json::to_string(&entry).unwrap_or_default();
+    line.push('\n');
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&manifest)
+    {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// Remove manifest entries whose log files no longer exist.
+async fn cleanup_session_manifest(
+    logs_dir: &std::path::Path,
+    existing_files: &[std::path::PathBuf],
+) {
+    let manifest = logs_dir.join("sessions.jsonl");
+    if !manifest.exists() {
+        return;
+    }
+
+    let content = match tokio::fs::read_to_string(&manifest).await {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Build set of existing session IDs from filenames
+    let existing_ids: std::collections::HashSet<String> = existing_files
+        .iter()
+        .filter_map(|p| {
+            let name = p.file_name()?.to_string_lossy().to_string();
+            // "session-1709415600.log" → "1709415600"
+            name.strip_prefix("session-")
+                .and_then(|s| s.strip_suffix(".log"))
+                .map(|s| s.to_string())
+        })
+        .collect();
+
+    let mut kept = Vec::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(id) = entry["session_id"].as_u64() {
+                // Keep if file exists or if it's the current session (latest.log)
+                if existing_ids.contains(&id.to_string()) || !logs_dir.join(format!("session-{id}.log")).exists() {
+                    kept.push(line.to_string());
+                }
+            }
+        }
+    }
+
+    let new_content = if kept.is_empty() {
+        String::new()
+    } else {
+        kept.join("\n") + "\n"
+    };
+    let _ = tokio::fs::write(&manifest, new_content).await;
 }
