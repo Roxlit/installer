@@ -276,11 +276,22 @@ async fn output_writer_task(
             let _ = writer.flush().await;
             drop(writer);
 
-            // Rotate output.log → {timestamp}-output.log
             let output_path = logs_dir.join("output.log");
+
             let ts = unix_timestamp();
-            let rotated = logs_dir.join(format!("{ts}-output.log"));
-            let _ = tokio::fs::rename(&output_path, &rotated).await;
+
+            // Only rotate if the file has real content (not just headers)
+            let has_content = tokio::fs::metadata(&output_path)
+                .await
+                .map(|m| m.len() > 100) // headers alone are ~60 bytes
+                .unwrap_or(false);
+
+            if has_content {
+                let rotated = logs_dir.join(format!("{ts}-output.log"));
+                let _ = tokio::fs::rename(&output_path, &rotated).await;
+            } else {
+                let _ = tokio::fs::remove_file(&output_path).await;
+            }
 
             // Open fresh output.log
             let new_file = match tokio::fs::OpenOptions::new()
