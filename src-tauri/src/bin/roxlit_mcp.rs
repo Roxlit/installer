@@ -103,13 +103,18 @@ fn handle_tools_list(id: Value) -> Value {
                 },
                 {
                     "name": "get_logs",
-                    "description": "Read Studio output logs from a Roxlit session. Returns captured print(), warn(), and error() output from Studio. Use 'latest' for the current/most recent session or a session_id from list_sessions. Use the tail parameter to get only the last N lines.",
+                    "description": "Read logs from a Roxlit session. Two sources: 'output' (default) for Studio game output (prints, warns, errors from user scripts — use this to debug the user's game), or 'system' for Roxlit infrastructure logs (rojo, mcp events). Use 'latest' for the current session or a session_id from list_sessions. Use tail to get only the last N lines.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "project_path": {
                                 "type": "string",
                                 "description": "Absolute path to the Rojo project directory"
+                            },
+                            "source": {
+                                "type": "string",
+                                "enum": ["output", "system"],
+                                "description": "Which log to read: 'output' (default) for Studio game output, 'system' for Roxlit infrastructure"
                             },
                             "session": {
                                 "type": "string",
@@ -273,6 +278,7 @@ fn tool_get_logs(id: Value, arguments: &Value) -> Value {
         }
     };
 
+    let source = arguments["source"].as_str().unwrap_or("output");
     let session = arguments["session"].as_str().unwrap_or("latest");
     let tail = arguments["tail"].as_u64().unwrap_or(0) as usize;
 
@@ -280,10 +286,15 @@ fn tool_get_logs(id: Value, arguments: &Value) -> Value {
         .join(".roxlit")
         .join("logs");
 
+    let filename = match source {
+        "system" => "system.log",
+        _ => "output.log",
+    };
+
     let log_file = if session == "latest" {
-        logs_dir.join("latest.log")
+        logs_dir.join(filename)
     } else {
-        logs_dir.join(format!("session-{session}.log"))
+        logs_dir.join(format!("{session}-{filename}"))
     };
 
     if !log_file.exists() {
@@ -361,16 +372,14 @@ fn tool_list_sessions(id: Value, arguments: &Value) -> Value {
         }
         if let Ok(mut entry) = serde_json::from_str::<Value>(line) {
             if let Some(session_id) = entry["session_id"].as_u64() {
-                let session_file = logs_dir.join(format!("session-{session_id}.log"));
-                let is_current = !session_file.exists() && logs_dir.join("latest.log").exists();
+                let rotated_output = logs_dir.join(format!("{session_id}-output.log"));
+                let is_current = !rotated_output.exists() && logs_dir.join("output.log").exists();
                 entry["is_current"] = json!(is_current);
-                entry["file"] = if is_current {
-                    json!("latest.log")
-                } else if session_file.exists() {
-                    json!(format!("session-{session_id}.log"))
-                } else {
-                    json!(null)
-                };
+                entry["has_output"] = json!(is_current || rotated_output.exists());
+                entry["has_system"] = json!(
+                    (is_current && logs_dir.join("system.log").exists())
+                    || logs_dir.join(format!("{session_id}-system.log")).exists()
+                );
             }
             sessions.push(entry);
         }

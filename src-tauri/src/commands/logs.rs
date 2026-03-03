@@ -122,22 +122,24 @@ impl Default for LoggerState {
     }
 }
 
-/// Async session logger that writes timestamped lines to `.roxlit/logs/latest.log`.
+/// Async session logger that writes to two separate log files:
+/// - `system.log` — Roxlit infrastructure (rojo, roxlit, mcp events)
+/// - `output.log` — Studio game output (prints, warns, errors from user scripts)
 ///
-/// Uses an mpsc channel so callers never block on disk I/O — `log()` just sends
-/// through the channel, and a background task does the actual writing.
+/// Uses mpsc channels so callers never block on disk I/O.
 pub struct SessionLogger {
-    tx: mpsc::UnboundedSender<String>,
+    system_tx: mpsc::UnboundedSender<String>,
+    output_tx: mpsc::UnboundedSender<String>,
 }
 
 impl SessionLogger {
     /// Create a new session logger for the given project.
     ///
     /// - Creates `.roxlit/logs/` if it doesn't exist
-    /// - Rotates `latest.log` → `session-{timestamp}.log`
+    /// - Rotates previous `system.log`/`output.log` → `{ts}-system.log`/`{ts}-output.log`
     /// - Writes session entry to `sessions.jsonl` manifest
     /// - Cleans up old sessions (keeps max 10)
-    /// - Spawns a background writer task
+    /// - Spawns background writer tasks for both files
     pub async fn new(project_path: &str, project_name: &str) -> Option<Self> {
         let logs_dir = std::path::Path::new(project_path)
             .join(".roxlit")
@@ -147,13 +149,28 @@ impl SessionLogger {
             return None;
         }
 
-        let latest = logs_dir.join("latest.log");
+        let ts = unix_timestamp();
 
-        // Rotate previous latest.log to session-{timestamp}.log
+        // Rotate previous log files
+        let system_file = logs_dir.join("system.log");
+        let output_file = logs_dir.join("output.log");
+        if system_file.exists() {
+            let rotated = logs_dir.join(format!("{ts}-system.log"));
+            let _ = tokio::fs::rename(&system_file, &rotated).await;
+        }
+        if output_file.exists() {
+            let rotated = logs_dir.join(format!("{ts}-output.log"));
+            let _ = tokio::fs::rename(&output_file, &rotated).await;
+        }
+        // Also rotate legacy latest.log if present
+        let latest = logs_dir.join("latest.log");
         if latest.exists() {
-            let ts = unix_timestamp();
-            let rotated = logs_dir.join(format!("session-{ts}.log"));
-            let _ = tokio::fs::rename(&latest, &rotated).await;
+            let rotated = logs_dir.join(format!("{ts}-system.log"));
+            if !rotated.exists() {
+                let _ = tokio::fs::rename(&latest, &rotated).await;
+            } else {
+                let _ = tokio::fs::remove_file(&latest).await;
+            }
         }
 
         // Clean up old sessions (keep max 10)
@@ -163,35 +180,53 @@ impl SessionLogger {
         let session_id = unix_timestamp();
         append_session_manifest(&logs_dir, session_id, project_name, project_path);
 
-        // Open latest.log for writing
-        let file = match tokio::fs::OpenOptions::new()
+        // Open system.log
+        let sys_file = match tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&latest)
+            .open(&system_file)
             .await
         {
             Ok(f) => f,
             Err(_) => return None,
         };
 
-        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        // Open output.log
+        let out_file = match tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&output_file)
+            .await
+        {
+            Ok(f) => f,
+            Err(_) => return None,
+        };
 
-        // Spawn writer task
-        tokio::spawn(writer_task(file, rx));
+        let (system_tx, system_rx) = mpsc::unbounded_channel::<String>();
+        let (output_tx, output_rx) = mpsc::unbounded_channel::<String>();
 
-        // Write header
+        tokio::spawn(writer_task(sys_file, system_rx));
+        tokio::spawn(writer_task(out_file, output_rx));
+
+        // Write headers
         let header = format!(
             "=== Roxlit Session — {} ===\n\n",
             format_timestamp(unix_timestamp())
         );
-        let _ = tx.send(header);
+        let _ = system_tx.send(header.clone());
+        let _ = output_tx.send(header);
 
-        Some(Self { tx })
+        Some(Self { system_tx, output_tx })
     }
 
-    /// Clone the sender so reader tasks can log without holding a lock.
-    pub fn sender(&self) -> mpsc::UnboundedSender<String> {
-        self.tx.clone()
+    /// Clone the system log sender (for rojo, roxlit, mcp events).
+    pub fn system_sender(&self) -> mpsc::UnboundedSender<String> {
+        self.system_tx.clone()
+    }
+
+    /// Clone the output log sender (for Studio game output).
+    pub fn output_sender(&self) -> mpsc::UnboundedSender<String> {
+        self.output_tx.clone()
     }
 }
 
@@ -329,10 +364,11 @@ impl LogServerState {
 /// The server accepts these endpoints:
 /// - `GET /health` → responds `200 ok`
 /// - `GET /status` → JSON with launcher active state, project info
-/// - `POST /log` → parses a JSON batch of `{message, level, timestamp}` and writes to the session log
+/// - `POST /log` → parses a JSON batch of `{message, level, timestamp}` and writes to output.log
 /// - `POST /link-place` → receives `{placeId, placeName}` from Studio plugin
 pub async fn start_log_server(
-    log_tx: mpsc::UnboundedSender<String>,
+    system_tx: mpsc::UnboundedSender<String>,
+    output_tx: mpsc::UnboundedSender<String>,
     status: Arc<Mutex<LauncherStatusInner>>,
     mcp: Arc<Mutex<McpStateInner>>,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -345,11 +381,12 @@ pub async fn start_log_server(
                 Err(_) => continue,
             };
 
-            let tx = log_tx.clone();
+            let sys_tx = system_tx.clone();
+            let out_tx = output_tx.clone();
             let status = status.clone();
             let mcp = mcp.clone();
             tokio::spawn(async move {
-                handle_connection(stream, tx, status, mcp).await;
+                handle_connection(stream, sys_tx, out_tx, status, mcp).await;
             });
         }
     });
@@ -360,7 +397,8 @@ pub async fn start_log_server(
 /// Handle a single TCP connection with minimal HTTP parsing.
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
-    tx: mpsc::UnboundedSender<String>,
+    system_tx: mpsc::UnboundedSender<String>,
+    output_tx: mpsc::UnboundedSender<String>,
     status: Arc<Mutex<LauncherStatusInner>>,
     mcp: Arc<Mutex<McpStateInner>>,
 ) {
@@ -464,7 +502,7 @@ async fn handle_connection(
                 guard.linked_universe_id = universe_id;
                 guard.linked_place_name = place_name;
                 if let Some(id) = place_id {
-                    send_log(&tx, "roxlit", &format!("Studio linked placeId {id}"));
+                    send_log(&system_tx, "roxlit", &format!("Studio linked placeId {id}"));
                 }
             }
         }
@@ -477,7 +515,7 @@ async fn handle_connection(
         // Find the body (after \r\n\r\n)
         if let Some(body_start) = request.find("\r\n\r\n") {
             let body = &request[body_start + 4..];
-            process_log_batch(&tx, body);
+            process_log_batch(&output_tx, body);
         }
         let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
         let _ = stream.write_all(response.as_bytes()).await;
@@ -512,7 +550,7 @@ async fn handle_connection(
                     guard.result_sender = Some(result_tx);
                 }
 
-                send_log(&tx, "mcp", &format!("Queued run_code command {id}"));
+                send_log(&system_tx, "mcp", &format!("Queued run_code command {id}"));
 
                 // Wait for result with 30s timeout
                 let result = tokio::time::timeout(
@@ -590,7 +628,7 @@ async fn handle_connection(
                 let result = val["result"].as_str().unwrap_or("").to_string();
                 let id = val["id"].as_str().unwrap_or("?");
 
-                send_log(&tx, "mcp", &format!("Result for command {id}: success={success}"));
+                send_log(&system_tx, "mcp", &format!("Result for command {id}: success={success}"));
 
                 // Deliver the result to the waiting POST /mcp/run-code caller
                 let mut guard = mcp.lock().await;
@@ -640,35 +678,59 @@ fn process_log_batch(tx: &mpsc::UnboundedSender<String>, body: &str) {
     }
 }
 
-/// Keep only the 10 most recent `session-*.log` files.
+/// Keep only the 10 most recent sessions (each session = a pair of {ts}-system.log + {ts}-output.log).
+/// Also cleans up legacy `session-*.log` files from the old format.
 async fn cleanup_old_sessions(logs_dir: &std::path::Path) {
     let mut entries = match tokio::fs::read_dir(logs_dir).await {
         Ok(rd) => rd,
         Err(_) => return,
     };
 
-    let mut session_files: Vec<std::path::PathBuf> = Vec::new();
+    let mut session_ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut all_log_files: Vec<std::path::PathBuf> = Vec::new();
+
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with("session-") && name_str.ends_with(".log") {
-            session_files.push(entry.path());
+        let name_str = name.to_string_lossy().to_string();
+
+        // New format: {ts}-system.log, {ts}-output.log
+        if name_str.ends_with("-system.log") || name_str.ends_with("-output.log") {
+            let ts = name_str.split('-').next().unwrap_or("");
+            if !ts.is_empty() && ts.chars().all(|c| c.is_ascii_digit()) {
+                session_ids.insert(ts.to_string());
+            }
+            all_log_files.push(entry.path());
+        }
+        // Legacy format: session-{ts}.log
+        else if name_str.starts_with("session-") && name_str.ends_with(".log") {
+            all_log_files.push(entry.path());
         }
     }
 
-    // Sort by name (timestamp is embedded, so lexicographic = chronological)
-    session_files.sort();
+    // Keep the 10 most recent session IDs
+    let ids: Vec<String> = session_ids.into_iter().collect();
+    let keep_ids: std::collections::HashSet<&str> = if ids.len() > 10 {
+        ids[ids.len() - 10..].iter().map(|s| s.as_str()).collect()
+    } else {
+        ids.iter().map(|s| s.as_str()).collect()
+    };
 
-    // Remove oldest files until we have at most 10
-    while session_files.len() > 10 {
-        if let Some(oldest) = session_files.first() {
-            let _ = tokio::fs::remove_file(oldest).await;
+    // Delete files from old sessions + all legacy session-*.log files
+    for path in &all_log_files {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.starts_with("session-") {
+            // Legacy file — always delete
+            let _ = tokio::fs::remove_file(path).await;
+        } else {
+            let ts = name.split('-').next().unwrap_or("");
+            if !keep_ids.contains(ts) {
+                let _ = tokio::fs::remove_file(path).await;
+            }
         }
-        session_files.remove(0);
     }
 
-    // Clean up manifest to match existing files
-    cleanup_session_manifest(logs_dir, &session_files).await;
+    // Clean up manifest
+    cleanup_session_manifest(logs_dir, &keep_ids).await;
 }
 
 /// Append a session entry to the `sessions.jsonl` manifest.
@@ -701,10 +763,10 @@ fn append_session_manifest(
     }
 }
 
-/// Remove manifest entries whose log files no longer exist.
+/// Remove manifest entries whose session files no longer exist.
 async fn cleanup_session_manifest(
     logs_dir: &std::path::Path,
-    existing_files: &[std::path::PathBuf],
+    keep_ids: &std::collections::HashSet<&str>,
 ) {
     let manifest = logs_dir.join("sessions.jsonl");
     if !manifest.exists() {
@@ -716,18 +778,6 @@ async fn cleanup_session_manifest(
         Err(_) => return,
     };
 
-    // Build set of existing session IDs from filenames
-    let existing_ids: std::collections::HashSet<String> = existing_files
-        .iter()
-        .filter_map(|p| {
-            let name = p.file_name()?.to_string_lossy().to_string();
-            // "session-1709415600.log" → "1709415600"
-            name.strip_prefix("session-")
-                .and_then(|s| s.strip_suffix(".log"))
-                .map(|s| s.to_string())
-        })
-        .collect();
-
     let mut kept = Vec::new();
     for line in content.lines() {
         if line.trim().is_empty() {
@@ -735,8 +785,11 @@ async fn cleanup_session_manifest(
         }
         if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
             if let Some(id) = entry["session_id"].as_u64() {
-                // Keep if file exists or if it's the current session (latest.log)
-                if existing_ids.contains(&id.to_string()) || !logs_dir.join(format!("session-{id}.log")).exists() {
+                let id_str = id.to_string();
+                // Keep if it's in the retained set or is the current session (no rotated file yet)
+                let has_rotated = logs_dir.join(format!("{id}-system.log")).exists()
+                    || logs_dir.join(format!("{id}-output.log")).exists();
+                if keep_ids.contains(id_str.as_str()) || !has_rotated {
                     kept.push(line.to_string());
                 }
             }
