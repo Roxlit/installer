@@ -162,7 +162,7 @@ pub fn roxlit_mcp_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.9.0";
+pub const CONTEXT_VERSION: &str = "0.10.0";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -195,6 +195,27 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 - `run_test` with duration to capture script errors and print output
 - Each `run_code` call is a separate context — local variables don't persist between calls
 
+### *** MANDATORY: Debugging Discipline ***
+
+**The #1 failure mode is trying random fixes without understanding the system. These rules prevent it.**
+
+**Rule 1 — Inspect before modifying.** Before changing how ANY existing system behaves (official kits, marketplace assets, community systems), use `run_code` to understand it first:
+```lua
+-- BEFORE touching a car system, inspect it:
+run_code("for _,s in workspace.Car:GetDescendants() do if s:IsA('BaseScript') then print(s:GetFullName(), 'Enabled:', not s.Disabled) end end")
+run_code("local seat = workspace.Car:FindFirstChildWhichIsA('VehicleSeat', true); print('MaxSpeed:', seat.MaxSpeed, 'Torque:', seat.Torque)")
+```
+Read the actual scripts. Understand what sets what values, what triggers what. THEN write your solution.
+
+**Rule 2 — Diagnose before retrying.** When your code doesn't work, do NOT try a different approach. First:
+1. Use `run_code` to check: did the change actually apply?
+2. Print the state to see what happened — `run_code("print(seat.MaxSpeed)")` after setting it to 0
+3. Identify WHY it failed. If you can't explain why, you are not ready to try again.
+
+**Rule 3 — Maximum 2 blind attempts.** If two approaches fail without diagnosis, STOP writing code. Do a thorough inspection with `run_code`: read scripts, print properties, trace execution. Only write attempt #3 after you understand the system.
+
+**Rule 4 — Verify after each change.** After any modification, use `run_code` to confirm it took effect. Don't assume — verify.
+
 "#
     } else {
         r#"
@@ -204,9 +225,22 @@ Roxlit captures Studio output automatically:
 
 1. **Make sure your scripts have Debug.print() calls** — without them, logs are empty
 2. Ask the user to playtest (F5 in Studio)
-3. Read `.roxlit/logs/latest.log` — search `[studio-err]` for errors first
-4. If logs are empty: RoxlitDebug plugin not loaded (restart Studio) or no Debug.print() calls
-5. Fallback: ask the user to check Output panel in Studio
+3. Read `.roxlit/logs/output.log` — search `[ERROR]` for errors first, `[WARN]` for warnings
+4. Read `.roxlit/logs/system.log` for Rojo/infrastructure issues
+5. If logs are empty: Roxlit plugin not loaded (restart Studio) or no Debug.print() calls
+6. Fallback: ask the user to check Output panel in Studio
+
+### *** MANDATORY: Debugging Discipline ***
+
+**The #1 failure mode is trying random fixes without understanding the system. These rules prevent it.**
+
+**Rule 1 — Inspect before modifying.** Before changing how ANY existing system behaves, understand it first. Read the source code of scripts that control it. If you don't have the source, ask the user to share it or describe how it works.
+
+**Rule 2 — Diagnose before retrying.** When your code doesn't work, do NOT try a different approach. First add Debug.print() calls around the problem area, ask the user to playtest, and read the logs. Identify WHY it failed. If you can't explain why, you are not ready to try again.
+
+**Rule 3 — Maximum 2 blind attempts.** If two approaches fail without diagnosis, STOP writing code. Do a thorough investigation: read all relevant scripts, add extensive Debug.print() calls, ask the user to playtest and share the output. Only write attempt #3 after you understand the system.
+
+**Rule 4 — Verify after each change.** After any modification, add a Debug.print() to confirm the change took effect. Don't assume — verify.
 
 "#
     };
@@ -446,14 +480,23 @@ src/Workspace/
 **Always mention licensing**: tell the user to check the original source for license terms before using in a published game. Most community systems are free to use with credit, but the user should verify.
 {mcp_section}{instance_section}## Studio Output Logs
 
-Roxlit captures **all Roblox Studio output** (prints, warnings, errors) in real-time via a local plugin. When the user presses Play (F5), every `print()`, `warn()`, and `error()` from their scripts appears in `.roxlit/logs/latest.log` alongside Rojo logs.
+Roxlit captures **all Roblox Studio output** (prints, warnings, errors) in real-time via a local plugin. Logs are split into two files:
 
-### Log Prefixes
+- **`.roxlit/logs/output.log`** — Studio game output: all print(), warn(), error() from user scripts. This is what you read to debug the game.
+- **`.roxlit/logs/system.log`** — Roxlit infrastructure: Rojo startup, sync events, plugin status.
 
-- `[studio]` — print() output (info)
-- `[studio-warn]` — warn() output
-- `[studio-err]` — runtime errors, script errors
-- `[rojo]` / `[rojo-err]` — Rojo sync output
+Each playtest (F5) rotates output.log to a timestamped file. Old logs are cleaned up after 7 days.
+
+### Log Prefixes (output.log)
+
+- No prefix — print() output (info)
+- `[WARN]` — warn() output
+- `[ERROR]` — runtime errors, script errors
+
+### Log Prefixes (system.log)
+
+- `[rojo]` — Rojo sync output
+- `[roxlit]` — Roxlit launcher events
 
 ### *** MANDATORY: Debug.print() in EVERY Script — NO EXCEPTIONS ***
 
@@ -503,15 +546,17 @@ end)
 
 **When to use raw `print()` instead:** Only for output that you intentionally want players to see in production (e.g., admin commands feedback). For all debugging and development logging, always use `Debug.print()`.
 
-**Without debug prints, you are debugging blind. With them, you read `.roxlit/logs/latest.log` and see exactly what happened, what values were used, and where it failed.**
+**Without debug prints, you are debugging blind. With them, you read `.roxlit/logs/output.log` and see exactly what happened, what values were used, and where it failed.**
 
 ### Debugging Workflow
 
-1. **Read `.roxlit/logs/latest.log` FIRST** — the answer is almost always there
-2. Search for `[studio-err]` to find runtime errors
+1. **Read `.roxlit/logs/output.log` FIRST** — search `[ERROR]` for runtime errors, `[WARN]` for warnings
+2. Read `.roxlit/logs/system.log` for Rojo/infrastructure issues
 3. Follow `[ScriptName]` prints to trace execution flow
 4. If prints are missing, add more and ask the user to playtest again
 5. **Never guess** — always read the actual error before attempting a fix
+6. **When a fix doesn't work**: diagnose WHY before trying something else. Add Debug.print() calls around the problem area, ask the user to playtest, read the logs. Don't try a new approach until you understand what went wrong.
+7. **After 2 failed attempts**: STOP and do a thorough investigation. Read all relevant scripts, check all property values, trace the full execution path. Only then propose a new fix.
 
 ## Roblox Context Packs
 
@@ -531,7 +576,7 @@ Read `.roxlit/context/index.md` for an overview of all available packs.
 
 This project was set up with Roxlit. The Roxlit launcher manages Rojo automatically.
 
-- **Session logs on disk**: Roxlit captures ALL output to `.roxlit/logs/latest.log` — Rojo AND Roblox Studio console (prints, warnings, errors). You can read this file to diagnose issues without asking the user to copy-paste. Previous sessions are saved as `.roxlit/logs/session-<timestamp>.log` (up to 10 retained).
+- **Session logs on disk**: Roxlit captures output to two files: `.roxlit/logs/output.log` (Studio game output) and `.roxlit/logs/system.log` (Rojo/infrastructure). Read these to diagnose issues without asking the user to copy-paste. Each playtest rotates output.log; old logs cleaned after 7 days.
 - **Copy logs from UI**: The user can also click "Copy All" in the Roxlit launcher terminal to copy all logs and paste them here.
 - **Do NOT remove or modify the Roxlit-generated sections above.** They are auto-updated by Roxlit when new versions are available.
 
