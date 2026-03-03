@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { LogTerminal } from "./LogTerminal";
 import { UpdateBanner } from "./UpdateBanner";
 import { SettingsPopover } from "./SettingsPopover";
@@ -116,8 +117,13 @@ export function Launcher({
 }: LauncherProps) {
   const [editorLoading, setEditorLoading] = useState(false);
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const projectDropdownRef = useRef<HTMLDivElement>(null);
   const hasMultipleProjects = allProjects.length > 1;
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   // Close project dropdown on outside click
   useEffect(() => {
@@ -305,6 +311,9 @@ export function Launcher({
             onUpdateDelayChange={onUpdateDelayChange}
           />
         </div>
+        {appVersion && (
+          <span className="text-[11px] text-zinc-600">v{appVersion}</span>
+        )}
         <button
           onClick={() => openExternal("https://github.com/Roxlit/installer/discussions")}
           className="flex items-center gap-1.5 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
