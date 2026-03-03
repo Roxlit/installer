@@ -207,19 +207,21 @@ If `run_code` or other MCP tools fail with connection errors, tell the user:
 
 ### *** MANDATORY: Debugging Discipline ***
 
-**The #1 failure mode is trying random fixes without understanding the system. These rules prevent it.**
+**The #1 failure mode is trying random fixes without understanding the system. These rules are NOT suggestions — they are hard constraints. Violating them leads to 5+ failed attempts and wasted time.**
 
-**Rule 1 — Inspect before modifying.** Before changing how ANY existing system behaves (official kits, marketplace assets, community systems), use `run_code` to understand it first:
+**Rule 0 — ALWAYS read logs before writing code.** When the user reports a bug or something doesn't work, your FIRST action MUST be reading the logs. Not theorizing. Not "I know what happened." Not writing a fix. LOGS FIRST. Call `get_logs` with `source: "output"` and `tail: 50`. If you skip this step and go straight to coding, your fix WILL fail. This is the single most important rule.
+
+**Rule 1 — Inspect before modifying.** Before changing how ANY existing system behaves (official kits, marketplace assets, community systems), use `run_code` to read the actual source code and understand it:
 ```lua
--- BEFORE touching a car system, inspect it:
-run_code("for _,s in workspace.Car:GetDescendants() do if s:IsA('BaseScript') then print(s:GetFullName(), 'Enabled:', not s.Disabled) end end")
-run_code("local seat = workspace.Car:FindFirstChildWhichIsA('VehicleSeat', true); print('MaxSpeed:', seat.MaxSpeed, 'Torque:', seat.Torque)")
+-- BEFORE touching a car system, READ ITS CODE:
+run_code("print(car.Scripts.Driver.Source)")
+run_code("print(car.Scripts.Chassis.Source)")
 ```
-Read the actual scripts. Understand what sets what values, what triggers what. THEN write your solution.
+Understand what sets what values, what triggers what. THEN write your solution. If you don't read the code first, you are guessing.
 
 **Rule 2 — Diagnose before retrying.** When your code doesn't work, do NOT try a different approach. First:
-1. Use `run_code` to check: did the change actually apply?
-2. Print the state to see what happened — `run_code("print(seat.MaxSpeed)")` after setting it to 0
+1. Read the logs (`get_logs` with `tail: 50`)
+2. Use `run_code` to check: did the change actually apply?
 3. Identify WHY it failed. If you can't explain why, you are not ready to try again.
 
 **Rule 3 — Maximum 2 blind attempts.** If two approaches fail without diagnosis, STOP writing code. Do a thorough inspection with `run_code`: read scripts, print properties, trace execution. Only write attempt #3 after you understand the system.
@@ -242,7 +244,9 @@ Roxlit captures Studio output automatically:
 
 ### *** MANDATORY: Debugging Discipline ***
 
-**The #1 failure mode is trying random fixes without understanding the system. These rules prevent it.**
+**The #1 failure mode is trying random fixes without understanding the system. These rules are NOT suggestions — they are hard constraints. Violating them leads to 5+ failed attempts and wasted time.**
+
+**Rule 0 — ALWAYS read logs before writing code.** When the user reports a bug or something doesn't work, your FIRST action MUST be reading the logs. Not theorizing. Not "I know what happened." Not writing a fix. LOGS FIRST. Read `.roxlit/logs/output.log` (last 50-100 lines). If you skip this step and go straight to coding, your fix WILL fail. This is the single most important rule.
 
 **Rule 1 — Inspect before modifying.** Before changing how ANY existing system behaves, understand it first. Read the source code of scripts that control it. If you don't have the source, ask the user to share it or describe how it works.
 
