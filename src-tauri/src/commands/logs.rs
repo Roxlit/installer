@@ -581,9 +581,8 @@ async fn handle_connection(
     }
 
     if first_line.starts_with("POST /playtest-start") {
-        // Tell the output writer to rotate: close current file, rename, open fresh
-        let _ = output_tx.send(ROTATE_SENTINEL.to_string());
-        send_log(&system_tx, "roxlit", "Playtest started — rotating output.log");
+        // Legacy endpoint — markers now come through POST /log with level "marker"
+        send_log(&system_tx, "roxlit", "Playtest started");
         let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
         let _ = stream.write_all(response.as_bytes()).await;
         return;
@@ -747,6 +746,7 @@ fn process_log_batch(tx: &mpsc::UnboundedSender<String>, body: &str) {
         let level = entry["level"].as_str().unwrap_or("info");
 
         let formatted = match level {
+            "marker" => format!("{ts} ═══════ {message} ═══════\n"),
             "error" => format!("{ts} [ERROR] {message}\n"),
             "warn" => format!("{ts} [WARN] {message}\n"),
             _ => format!("{ts} {message}\n"),

@@ -493,8 +493,8 @@ fn move_luau_tree(src: &std::path::Path, dest: &std::path::Path) {
     }
 }
 
-/// Download roxlit-mcp binary if it doesn't exist yet.
-/// This handles upgrades from versions that didn't include MCP.
+/// Download or update roxlit-mcp binary.
+/// Re-downloads when the launcher version changes (version tracked in .roxlit/bin/mcp.version).
 async fn ensure_mcp_binary() {
     let mcp_bin_name = if cfg!(target_os = "windows") {
         "roxlit-mcp.exe"
@@ -508,8 +508,17 @@ async fn ensure_mcp_binary() {
     };
 
     let mcp_path = bin_dir.join(mcp_bin_name);
+    let version_file = bin_dir.join("mcp.version");
+    let current_version = env!("CARGO_PKG_VERSION");
+
+    // Check if binary exists AND version matches
     if mcp_path.exists() {
-        return; // Already downloaded
+        if let Ok(stored) = tokio::fs::read_to_string(&version_file).await {
+            if stored.trim() == current_version {
+                return; // Up to date
+            }
+        }
+        // Version mismatch or no version file — re-download
     }
 
     // Determine download URL
@@ -525,6 +534,8 @@ async fn ensure_mcp_binary() {
         if response.status().is_success() {
             if let Ok(bytes) = response.bytes().await {
                 let _ = tokio::fs::write(&mcp_path, &bytes).await;
+                // Track which version this binary belongs to
+                let _ = tokio::fs::write(&version_file, current_version).await;
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
