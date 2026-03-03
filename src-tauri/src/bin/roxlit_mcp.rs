@@ -103,7 +103,7 @@ fn handle_tools_list(id: Value) -> Value {
                 },
                 {
                     "name": "get_logs",
-                    "description": "Read logs from a Roxlit session. Two sources: 'output' (default) for Studio game output (prints, warns, errors from user scripts — use this to debug the user's game), or 'system' for Roxlit infrastructure logs (rojo, mcp events). Use 'latest' for the current session or a session_id from list_sessions. Use tail to get only the last N lines.",
+                    "description": "Read logs from a Roxlit session. Two sources: 'output' (default) for Studio game output (prints, warns, errors from user scripts — use this to debug the user's game), or 'system' for Roxlit infrastructure logs (rojo, mcp events). Logs contain playtest markers (═══════ PLAYTEST #N START/END ═══════). Use the 'playtest' parameter to filter: 'latest' (default for output) returns only the most recent playtest, 'all' returns everything, or a number for a specific playtest.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -120,9 +120,13 @@ fn handle_tools_list(id: Value) -> Value {
                                 "type": "string",
                                 "description": "Session to read: 'latest' (default) or a session_id from list_sessions"
                             },
+                            "playtest": {
+                                "type": "string",
+                                "description": "Filter by playtest: 'latest' (default for output) returns only the most recent playtest, 'all' returns everything, or a number (e.g. '1', '2') for a specific playtest"
+                            },
                             "tail": {
                                 "type": "integer",
-                                "description": "Only return the last N lines (0 or omitted = all lines)"
+                                "description": "Only return the last N lines (0 or omitted = all lines). Applied after playtest filtering."
                             }
                         },
                         "required": ["project_path"]
@@ -280,6 +284,8 @@ fn tool_get_logs(id: Value, arguments: &Value) -> Value {
 
     let source = arguments["source"].as_str().unwrap_or("output");
     let session = arguments["session"].as_str().unwrap_or("latest");
+    let playtest_default = if source == "output" { "latest" } else { "all" };
+    let playtest = arguments["playtest"].as_str().unwrap_or(playtest_default);
     let tail = arguments["tail"].as_u64().unwrap_or(0) as usize;
 
     let logs_dir = std::path::Path::new(project_path)
@@ -308,12 +314,15 @@ fn tool_get_logs(id: Value, arguments: &Value) -> Value {
         }
     };
 
+    // Filter by playtest if requested
+    let filtered = filter_by_playtest(&content, playtest);
+
     let output = if tail > 0 {
-        let lines: Vec<&str> = content.lines().collect();
+        let lines: Vec<&str> = filtered.lines().collect();
         let start = lines.len().saturating_sub(tail);
         lines[start..].join("\n")
     } else {
-        content
+        filtered
     };
 
     // Truncate if extremely large to avoid flooding the AI context
@@ -395,6 +404,54 @@ fn tool_list_sessions(id: Value, arguments: &Value) -> Value {
             "isError": false
         }
     })
+}
+
+/// Filter log content by playtest markers.
+/// - "all": return everything as-is
+/// - "latest": return from the last PLAYTEST START marker to end of file
+/// - "N" (number): return lines between PLAYTEST #N START and PLAYTEST #N END
+fn filter_by_playtest(content: &str, playtest: &str) -> String {
+    if playtest == "all" {
+        return content.to_string();
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    let marker_pattern = "═══════ PLAYTEST #";
+
+    if playtest == "latest" {
+        // Find the last START marker
+        let mut last_start = None;
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains(marker_pattern) && line.contains("START") {
+                last_start = Some(i);
+            }
+        }
+        match last_start {
+            Some(start) => lines[start..].join("\n"),
+            None => content.to_string(), // No markers found, return all
+        }
+    } else if let Ok(n) = playtest.parse::<u32>() {
+        // Find PLAYTEST #N START and END
+        let start_marker = format!("PLAYTEST #{n} START");
+        let end_marker = format!("PLAYTEST #{n} END");
+        let mut start_idx = None;
+        let mut end_idx = None;
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains(&start_marker) {
+                start_idx = Some(i);
+            }
+            if line.contains(&end_marker) {
+                end_idx = Some(i);
+            }
+        }
+        match (start_idx, end_idx) {
+            (Some(s), Some(e)) => lines[s..=e].join("\n"),
+            (Some(s), None) => lines[s..].join("\n"), // Still running
+            _ => format!("No playtest #{n} found in logs"),
+        }
+    } else {
+        content.to_string() // Unknown value, return all
+    }
 }
 
 /// Helper for MCP tool error responses.
