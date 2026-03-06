@@ -683,8 +683,13 @@ fn tool_backup_restore(id: Value, arguments: &Value) -> Value {
 
     let stash_ref = format!("stash@{{{stash_index}}}");
 
+    // Skip auto-backup if restoring a pre-restore backup (undoing a restore)
+    // because the current state already exists as the backup we originally restored from
+    let is_undo_restore = is_pre_restore_backup(project_path, backup_id);
+
     // Auto-backup current state before restoring (so user can undo the restore)
     let mut auto_backup_msg = String::new();
+    if !is_undo_restore {
     let _ = run_git(project_path, &["add", "-A"]);
     if let Ok(sha) = run_git(project_path, &["stash", "create"]) {
         let sha = sha.trim().to_string();
@@ -716,6 +721,7 @@ fn tool_backup_restore(id: Value, arguments: &Value) -> Value {
         }
     }
     let _ = run_git(project_path, &["reset"]);
+    } // end if !is_undo_restore
 
     // Restore files from stash without dropping it
     if let Err(e) = run_git(project_path, &["checkout", &stash_ref, "--", "."]) {
@@ -822,6 +828,23 @@ fn ensure_git_repo(path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to create initial commit: {e}"))?;
 
     Ok(())
+}
+
+/// Check if a backup ID corresponds to an auto pre-restore backup.
+fn is_pre_restore_backup(path: &str, backup_id: &str) -> bool {
+    let manifest_path = Path::new(path).join(".roxlit").join("backups.jsonl");
+    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+        for line in content.lines() {
+            if let Ok(entry) = serde_json::from_str::<Value>(line) {
+                if entry["id"].as_str() == Some(backup_id) {
+                    if let Some(name) = entry["name"].as_str() {
+                        return name.starts_with("pre-restore-");
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Find the stash index for a given backup ID by searching git stash list.
