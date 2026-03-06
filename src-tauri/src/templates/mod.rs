@@ -193,12 +193,21 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 
 **Do NOT use MCP to create instances.** Write .model.json files instead — Rojo syncs them automatically.
 
-### Backup Discipline
+### *** MANDATORY: Backup Discipline ***
 
-- **Before risky changes**: Always call `backup_create` with a descriptive name (e.g. `"before-combat-refactor"`).
-- **Before switching approaches**: If your current fix isn't working and you want to try something different, create a backup first.
-- **Restoring is safe**: `backup_restore` auto-saves current state as `pre-restore-{id}`, so you can always undo.
-- **Use `backup_diff`** to see exactly what changed since a backup — helps decide whether to keep changes or restore.
+**These are NOT suggestions. You MUST follow these rules. Failing to backup before changes is the #2 cause of wasted time (after not reading logs).**
+
+**Rule 1 — Backup before ANY multi-file change.** If you are about to modify more than 1 file, call `backup_create` first. Name it descriptively: `"before-combat-refactor"`, `"before-gui-rewrite"`, `"before-vehicle-fix"`. This takes 1 second and saves hours of recovery.
+
+**Rule 2 — Backup before switching approaches.** If your current fix failed and you want to try something different, ALWAYS `backup_create` before starting the new approach. Name it `"approach-1-failed-{reason}"`. This way you can compare approaches or go back.
+
+**Rule 3 — Backup before touching community systems.** Before modifying ANY community/marketplace code (vehicle chassis, combat framework, etc.), create a backup. These systems are complex and easy to break.
+
+**Rule 4 — Use `backup_diff` before giving up.** Before telling the user "this doesn't work", run `backup_diff` to see exactly what you changed. Often the bug is in your changes, not the system.
+
+**Rule 5 — Restoring is always safe.** `backup_restore` auto-saves current state as `pre-restore-{id}`, so you can always undo a restore. Never hesitate to restore.
+
+**Rule 6 — When in doubt, backup.** If you're not sure whether something will break, create a backup. The cost is zero. The cost of NOT backing up is starting over from scratch.
 
 ### MCP Connection Issues
 
