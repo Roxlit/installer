@@ -44,9 +44,15 @@ jobs:
         with:
           tauriScript: npx tauri
 
-      - name: Verify roxlit-mcp compiles
-        run: cd src-tauri && cargo check --bin roxlit-mcp
+      - name: Build roxlit-mcp binary
+        run: cd src-tauri && cargo build --release --bin roxlit-mcp
         shell: pwsh
+
+      - name: Upload roxlit-mcp
+        uses: actions/upload-artifact@v4
+        with:
+          name: roxlit-mcp
+          path: src-tauri/target/release/roxlit-mcp.exe
 
       - name: Upload portable exe
         uses: actions/upload-artifact@v4

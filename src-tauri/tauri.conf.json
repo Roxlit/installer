@@ -42,7 +42,7 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "installerIcon": "icons/icon.ico",
+        "installerIcon": "icons/installer.ico",
         "headerImage": "icons/nsis_header.bmp",
         "sidebarImage": "icons/nsis_sidebar.bmp",
         "installerHooks": "nsis-hooks.nsh"

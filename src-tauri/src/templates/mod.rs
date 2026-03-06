@@ -162,7 +162,7 @@ pub fn roxlit_mcp_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.10.0";
+pub const CONTEXT_VERSION: &str = "0.11.0";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -184,8 +184,30 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 - `run_code` — Execute Luau in Studio. For quick checks, verifying state, debugging. NOT for building instances (use .model.json instead).
 - `run_test` — Start a playtest, capture all console output, stop. Your #1 debugging tool.
 - `insert_model` — Insert a marketplace asset by ID into Studio.
+- `get_logs` — Read Studio output or system logs. Use `source: "output"` + `tail: 50` to debug. Supports `playtest: "latest"` (default) to filter by playtest.
+- `list_sessions` — List available log sessions for the project.
+- `backup_create` — Snapshot current project state before risky changes. Does NOT modify your files. Returns a backup ID (e.g. `bk-001`).
+- `backup_list` — List all backups with IDs, names, and timestamps.
+- `backup_restore` — Revert all files to a backup state. Automatically saves current state first (so you can undo).
+- `backup_diff` — Show what changed since a backup was created.
 
 **Do NOT use MCP to create instances.** Write .model.json files instead — Rojo syncs them automatically.
+
+### *** MANDATORY: Backup Discipline ***
+
+**These are NOT suggestions. You MUST follow these rules. Failing to backup before changes is the #2 cause of wasted time (after not reading logs).**
+
+**Rule 1 — Backup before ANY multi-file change.** If you are about to modify more than 1 file, call `backup_create` first. Name it descriptively: `"before-combat-refactor"`, `"before-gui-rewrite"`, `"before-vehicle-fix"`. This takes 1 second and saves hours of recovery.
+
+**Rule 2 — Backup before switching approaches.** If your current fix failed and you want to try something different, ALWAYS `backup_create` before starting the new approach. Name it `"approach-1-failed-{reason}"`. This way you can compare approaches or go back.
+
+**Rule 3 — Backup before touching community systems.** Before modifying ANY community/marketplace code (vehicle chassis, combat framework, etc.), create a backup. These systems are complex and easy to break.
+
+**Rule 4 — Use `backup_diff` before giving up.** Before telling the user "this doesn't work", run `backup_diff` to see exactly what you changed. Often the bug is in your changes, not the system.
+
+**Rule 5 — Restoring is always safe.** `backup_restore` auto-saves current state as `pre-restore-{id}`, so you can always undo a restore. Never hesitate to restore.
+
+**Rule 6 — When in doubt, backup.** If you're not sure whether something will break, create a backup. The cost is zero. The cost of NOT backing up is starting over from scratch.
 
 ### MCP Connection Issues
 
