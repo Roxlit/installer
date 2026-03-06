@@ -402,10 +402,23 @@ fn tool_get_logs(id: Value, arguments: &Value) -> Value {
         filtered
     };
 
-    // Truncate if extremely large to avoid flooding the AI context
-    let output = if output.len() > 100_000 {
-        let truncated = &output[output.len() - 100_000..];
-        format!("[...truncated, showing last ~100KB...]\n{truncated}")
+    // Truncate long lines (Studio can produce huge single-line outputs)
+    let output: String = output
+        .lines()
+        .map(|line| {
+            if line.len() > 500 {
+                format!("{}... [truncated, {} chars total]", &line[..500], line.len())
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Truncate total size to avoid exceeding AI context limits
+    let output = if output.len() > 15_000 {
+        let truncated = &output[output.len() - 15_000..];
+        format!("[...truncated, showing last ~15KB...]\n{truncated}")
     } else {
         output
     };
