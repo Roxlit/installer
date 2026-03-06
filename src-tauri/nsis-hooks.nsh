@@ -1,5 +1,9 @@
 ; Roxlit NSIS hooks
-; Preserve user data (config, project registry) across reinstalls.
+
+!macro NSIS_HOOK_PREINSTALL
+  ; Set uninstaller icon to red logo
+  !define MUI_UNICON "icons\uninstaller.ico"
+!macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
   ; Intentionally empty — do NOT delete ~/.roxlit/.
