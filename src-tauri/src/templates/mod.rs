@@ -162,7 +162,7 @@ pub fn roxlit_mcp_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.10.0";
+pub const CONTEXT_VERSION: &str = "0.11.0";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -184,8 +184,21 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 - `run_code` — Execute Luau in Studio. For quick checks, verifying state, debugging. NOT for building instances (use .model.json instead).
 - `run_test` — Start a playtest, capture all console output, stop. Your #1 debugging tool.
 - `insert_model` — Insert a marketplace asset by ID into Studio.
+- `get_logs` — Read Studio output or system logs. Use `source: "output"` + `tail: 50` to debug. Supports `playtest: "latest"` (default) to filter by playtest.
+- `list_sessions` — List available log sessions for the project.
+- `backup_create` — Snapshot current project state before risky changes. Does NOT modify your files. Returns a backup ID (e.g. `bk-001`).
+- `backup_list` — List all backups with IDs, names, and timestamps.
+- `backup_restore` — Revert all files to a backup state. Automatically saves current state first (so you can undo).
+- `backup_diff` — Show what changed since a backup was created.
 
 **Do NOT use MCP to create instances.** Write .model.json files instead — Rojo syncs them automatically.
+
+### Backup Discipline
+
+- **Before risky changes**: Always call `backup_create` with a descriptive name (e.g. `"before-combat-refactor"`).
+- **Before switching approaches**: If your current fix isn't working and you want to try something different, create a backup first.
+- **Restoring is safe**: `backup_restore` auto-saves current state as `pre-restore-{id}`, so you can always undo.
+- **Use `backup_diff`** to see exactly what changed since a backup — helps decide whether to keep changes or restore.
 
 ### MCP Connection Issues
 
