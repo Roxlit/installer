@@ -360,7 +360,10 @@ fn tool_get_logs(id: Value, arguments: &Value) -> Value {
     let session = arguments["session"].as_str().unwrap_or("latest");
     let playtest_default = if source == "output" { "latest" } else { "all" };
     let playtest = arguments["playtest"].as_str().unwrap_or(playtest_default);
-    let tail = arguments["tail"].as_u64().unwrap_or(0) as usize;
+    let tail = arguments["tail"]
+        .as_u64()
+        .or_else(|| arguments["tail"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0) as usize;
 
     let logs_dir = std::path::Path::new(project_path)
         .join(".roxlit")
