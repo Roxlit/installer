@@ -664,6 +664,40 @@ fn tool_backup_restore(id: Value, arguments: &Value) -> Value {
 
     let stash_ref = format!("stash@{{{stash_index}}}");
 
+    // Auto-backup current state before restoring (so user can undo the restore)
+    let mut auto_backup_msg = String::new();
+    let _ = run_git(project_path, &["add", "-A"]);
+    if let Ok(sha) = run_git(project_path, &["stash", "create"]) {
+        let sha = sha.trim().to_string();
+        if !sha.is_empty() {
+            let auto_id = next_backup_id(project_path);
+            let auto_label = format!("pre-restore-{backup_id}");
+            let stash_msg = format!("roxlit:{auto_id}:{auto_label}");
+            if run_git(project_path, &["stash", "store", "-m", &stash_msg, &sha]).is_ok() {
+                // Write to manifest
+                let timestamp = chrono_now();
+                let manifest_dir = std::path::Path::new(project_path).join(".roxlit");
+                let manifest_path = manifest_dir.join("backups.jsonl");
+                let entry = json!({
+                    "id": auto_id,
+                    "name": auto_label,
+                    "timestamp": timestamp,
+                    "stash_sha": sha,
+                    "auto": true,
+                });
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&manifest_path)
+                {
+                    let _ = writeln!(f, "{}", serde_json::to_string(&entry).unwrap_or_default());
+                }
+                auto_backup_msg = format!(" Current state saved as '{auto_id}' ({auto_label}) in case you need to undo.");
+            }
+        }
+    }
+    let _ = run_git(project_path, &["reset"]);
+
     // Restore files from stash without dropping it
     if let Err(e) = run_git(project_path, &["checkout", &stash_ref, "--", "."]) {
         return mcp_error_result(id, &format!("Failed to restore backup: {e}"));
@@ -674,7 +708,7 @@ fn tool_backup_restore(id: Value, arguments: &Value) -> Value {
 
     mcp_result(
         id,
-        &format!("Restored backup '{backup_id}'. Files have been reverted to the backup state. Changes are unstaged."),
+        &format!("Restored backup '{backup_id}'. Files have been reverted to the backup state.{auto_backup_msg}"),
     )
 }
 
