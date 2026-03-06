@@ -6,6 +6,8 @@
 
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
+use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
 
 const LAUNCHER_URL: &str = "http://127.0.0.1:19556";
@@ -145,6 +147,74 @@ fn handle_tools_list(id: Value) -> Value {
                         },
                         "required": ["project_path"]
                     }
+                },
+                {
+                    "name": "backup_create",
+                    "description": "Create a backup snapshot of the current project state. Uses git stash internally — does NOT modify the working tree (you keep working normally). Use before risky changes, switching debug approaches, or when the user asks. Returns the backup ID.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the project directory"
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Optional descriptive name for the backup (e.g. 'before-ragdoll-fix')"
+                            }
+                        },
+                        "required": ["project_path"]
+                    }
+                },
+                {
+                    "name": "backup_list",
+                    "description": "List all Roxlit backups for a project. Returns backup IDs, names, and timestamps.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the project directory"
+                            }
+                        },
+                        "required": ["project_path"]
+                    }
+                },
+                {
+                    "name": "backup_restore",
+                    "description": "Restore the project to a previous backup state. This OVERWRITES current files with the backup's state. The backup is preserved (not deleted) so you can restore again if needed.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the project directory"
+                            },
+                            "id": {
+                                "type": "string",
+                                "description": "Backup ID to restore (e.g. 'bk-001')"
+                            }
+                        },
+                        "required": ["project_path", "id"]
+                    }
+                },
+                {
+                    "name": "backup_diff",
+                    "description": "Show what changed since a backup was created. Returns a git diff between the backup state and the current working tree.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the project directory"
+                            },
+                            "id": {
+                                "type": "string",
+                                "description": "Backup ID to diff against (e.g. 'bk-001')"
+                            }
+                        },
+                        "required": ["project_path", "id"]
+                    }
                 }
             ]
         }
@@ -159,6 +229,10 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
         "run_code" => tool_run_code(id, &arguments),
         "get_logs" => tool_get_logs(id, &arguments),
         "list_sessions" => tool_list_sessions(id, &arguments),
+        "backup_create" => tool_backup_create(id, &arguments),
+        "backup_list" => tool_backup_list(id, &arguments),
+        "backup_restore" => tool_backup_restore(id, &arguments),
+        "backup_diff" => tool_backup_diff(id, &arguments),
         _ => json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -452,6 +526,313 @@ fn filter_by_playtest(content: &str, playtest: &str) -> String {
     } else {
         content.to_string() // Unknown value, return all
     }
+}
+
+// ─── Backup tools ───────────────────────────────────────────────────────────
+
+fn tool_backup_create(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'project_path' parameter is required"),
+    };
+    let name = arguments["name"].as_str().unwrap_or("");
+
+    // Ensure git repo exists
+    if let Err(e) = ensure_git_repo(project_path) {
+        return mcp_error_result(id, &e);
+    }
+
+    // Stage everything (including untracked) so stash create captures it
+    if let Err(e) = run_git(project_path, &["add", "-A"]) {
+        return mcp_error_result(id, &format!("Failed to stage files: {e}"));
+    }
+
+    // Create stash without modifying working tree
+    let sha = match run_git(project_path, &["stash", "create"]) {
+        Ok(s) => s.trim().to_string(),
+        Err(e) => return mcp_error_result(id, &format!("Failed to create stash: {e}")),
+    };
+
+    if sha.is_empty() {
+        // git stash create returns empty when there are no changes vs HEAD
+        // Reset index so we don't leave staged files
+        let _ = run_git(project_path, &["reset"]);
+        return mcp_result(id, "Nothing to backup — no changes detected since last commit.");
+    }
+
+    // Reset index (we staged for stash create, undo that)
+    let _ = run_git(project_path, &["reset"]);
+
+    // Get next backup ID
+    let backup_id = next_backup_id(project_path);
+    let label = if name.is_empty() {
+        backup_id.clone()
+    } else {
+        name.to_string()
+    };
+    let stash_msg = format!("roxlit:{backup_id}:{label}");
+
+    // Store the stash
+    if let Err(e) = run_git(project_path, &["stash", "store", "-m", &stash_msg, &sha]) {
+        return mcp_error_result(id, &format!("Failed to store stash: {e}"));
+    }
+
+    // Write to manifest
+    let timestamp = chrono_now();
+    let manifest_dir = Path::new(project_path).join(".roxlit");
+    let _ = std::fs::create_dir_all(&manifest_dir);
+    let manifest_path = manifest_dir.join("backups.jsonl");
+    let entry = json!({
+        "id": backup_id,
+        "name": if name.is_empty() { None } else { Some(name) },
+        "timestamp": timestamp,
+        "stash_sha": sha,
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&manifest_path)
+        .ok();
+    if let Some(ref mut f) = file {
+        let _ = writeln!(f, "{}", serde_json::to_string(&entry).unwrap_or_default());
+    }
+
+    let display_name = if name.is_empty() {
+        backup_id.clone()
+    } else {
+        format!("{backup_id} ({name})")
+    };
+    mcp_result(id, &format!("Backup created: {display_name}\nTimestamp: {timestamp}"))
+}
+
+fn tool_backup_list(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'project_path' parameter is required"),
+    };
+
+    let manifest_path = Path::new(project_path)
+        .join(".roxlit")
+        .join("backups.jsonl");
+
+    if !manifest_path.exists() {
+        return mcp_result(id, "No backups found.");
+    }
+
+    let content = match std::fs::read_to_string(&manifest_path) {
+        Ok(c) => c,
+        Err(e) => return mcp_error_result(id, &format!("Error reading backups manifest: {e}")),
+    };
+
+    let mut backups = Vec::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<Value>(line) {
+            backups.push(entry);
+        }
+    }
+
+    if backups.is_empty() {
+        return mcp_result(id, "No backups found.");
+    }
+
+    let output = serde_json::to_string_pretty(&backups).unwrap_or_default();
+    mcp_result(id, &output)
+}
+
+fn tool_backup_restore(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'project_path' parameter is required"),
+    };
+    let backup_id = match arguments["id"].as_str() {
+        Some(i) => i,
+        None => return mcp_error_result(id, "'id' parameter is required"),
+    };
+
+    let stash_index = match find_stash_index(project_path, backup_id) {
+        Some(i) => i,
+        None => {
+            return mcp_error_result(
+                id,
+                &format!("Backup '{backup_id}' not found in git stash list"),
+            )
+        }
+    };
+
+    let stash_ref = format!("stash@{{{stash_index}}}");
+
+    // Restore files from stash without dropping it
+    if let Err(e) = run_git(project_path, &["checkout", &stash_ref, "--", "."]) {
+        return mcp_error_result(id, &format!("Failed to restore backup: {e}"));
+    }
+
+    // Unstage everything so working tree is clean but not committed
+    let _ = run_git(project_path, &["reset"]);
+
+    mcp_result(
+        id,
+        &format!("Restored backup '{backup_id}'. Files have been reverted to the backup state. Changes are unstaged."),
+    )
+}
+
+fn tool_backup_diff(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'project_path' parameter is required"),
+    };
+    let backup_id = match arguments["id"].as_str() {
+        Some(i) => i,
+        None => return mcp_error_result(id, "'id' parameter is required"),
+    };
+
+    let stash_index = match find_stash_index(project_path, backup_id) {
+        Some(i) => i,
+        None => {
+            return mcp_error_result(
+                id,
+                &format!("Backup '{backup_id}' not found in git stash list"),
+            )
+        }
+    };
+
+    let stash_ref = format!("stash@{{{stash_index}}}");
+
+    // Diff: stash (backup state) vs working tree
+    // stash_ref is the old state, current working tree is new
+    let diff = match run_git(project_path, &["diff", &stash_ref]) {
+        Ok(d) => d,
+        Err(e) => return mcp_error_result(id, &format!("Failed to compute diff: {e}")),
+    };
+
+    if diff.trim().is_empty() {
+        return mcp_result(id, "No differences — current state matches the backup.");
+    }
+
+    // Truncate if too large
+    let output = if diff.len() > 50_000 {
+        format!(
+            "[...diff truncated, showing last ~50KB...]\n{}",
+            &diff[diff.len() - 50_000..]
+        )
+    } else {
+        diff
+    };
+
+    mcp_result(id, &output)
+}
+
+// ─── Git helpers ────────────────────────────────────────────────────────────
+
+/// Run a git command in the given directory. Returns stdout on success, stderr on error.
+fn run_git(path: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .map_err(|e| format!("Failed to run git: {e}"))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        // Some git commands (like stash create with no changes) return success with empty output
+        // but we also want to handle actual errors
+        if stderr.trim().is_empty() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(stderr)
+        }
+    }
+}
+
+/// Ensure the project directory is a git repository. If not, initialize one.
+fn ensure_git_repo(path: &str) -> Result<(), String> {
+    let git_dir = Path::new(path).join(".git");
+    if git_dir.exists() {
+        return Ok(());
+    }
+
+    // Check if git is installed
+    if Command::new("git").arg("--version").output().is_err() {
+        return Err("Git is not installed. Backups require git. Download it from: https://git-scm.com".to_string());
+    }
+
+    run_git(path, &["init"]).map_err(|e| format!("Failed to init git repo: {e}"))?;
+    run_git(path, &["add", "-A"]).map_err(|e| format!("Failed to stage files: {e}"))?;
+    run_git(path, &["commit", "-m", "roxlit: initial commit for backups"])
+        .map_err(|e| format!("Failed to create initial commit: {e}"))?;
+
+    Ok(())
+}
+
+/// Find the stash index for a given backup ID by searching git stash list.
+fn find_stash_index(path: &str, backup_id: &str) -> Option<usize> {
+    let stash_list = run_git(path, &["stash", "list"]).ok()?;
+    let pattern = format!("roxlit:{backup_id}:");
+
+    for line in stash_list.lines() {
+        if line.contains(&pattern) {
+            // Line format: stash@{N}: ...
+            let start = line.find('{')? + 1;
+            let end = line.find('}')?;
+            return line[start..end].parse().ok();
+        }
+    }
+    None
+}
+
+/// Get the next backup ID (bk-001, bk-002, etc.) from the manifest.
+fn next_backup_id(path: &str) -> String {
+    let manifest_path = Path::new(path).join(".roxlit").join("backups.jsonl");
+
+    let mut max_num: u32 = 0;
+    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+        for line in content.lines() {
+            if let Ok(entry) = serde_json::from_str::<Value>(line) {
+                if let Some(id) = entry["id"].as_str() {
+                    if let Some(num_str) = id.strip_prefix("bk-") {
+                        if let Ok(n) = num_str.parse::<u32>() {
+                            max_num = max_num.max(n);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    format!("bk-{:03}", max_num + 1)
+}
+
+/// Get current timestamp as ISO 8601 string (no chrono crate — manual formatting).
+fn chrono_now() -> String {
+    // Use `date` command for simplicity since we're already shelling out to git
+    Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Helper for MCP tool success responses.
+fn mcp_result(id: Value, text: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "content": [{ "type": "text", "text": text }],
+            "isError": false
+        }
+    })
 }
 
 /// Helper for MCP tool error responses.
