@@ -663,7 +663,10 @@ fn tool_backup_restore(id: Value, arguments: &Value) -> Value {
         Some(p) => p,
         None => return mcp_error_result(id, "'project_path' parameter is required"),
     };
-    let backup_id = match arguments["id"].as_str() {
+    let backup_id = match arguments["id"]
+        .as_str()
+        .or_else(|| arguments["backup_id"].as_str())
+    {
         Some(i) => i,
         None => return mcp_error_result(id, "'id' parameter is required"),
     };
@@ -733,7 +736,10 @@ fn tool_backup_diff(id: Value, arguments: &Value) -> Value {
         Some(p) => p,
         None => return mcp_error_result(id, "'project_path' parameter is required"),
     };
-    let backup_id = match arguments["id"].as_str() {
+    let backup_id = match arguments["id"]
+        .as_str()
+        .or_else(|| arguments["backup_id"].as_str())
+    {
         Some(i) => i,
         None => return mcp_error_result(id, "'id' parameter is required"),
     };
