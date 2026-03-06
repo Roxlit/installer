@@ -470,6 +470,7 @@ src/                                ← All game code and instances (synced by R
 - Require modules relatively: `require(script.Parent.ModuleName)`
 - Prefer `task.wait()` over `wait()`, `task.spawn()` over `spawn()`
 - Add `--!strict` at the top of every file
+- In `string.gsub()` replacements, `%` is a special character. Escape it as `%%` or use a function replacement: `gsub(pattern, function() return str end)`
 
 ## Instance Organization
 
