@@ -8,9 +8,17 @@ use std::process::Command;
 
 /// Run a git command in the given directory.
 pub fn run_git(path: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(path)
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(path);
+
+    // Prevent console windows from flashing on Windows
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to run git: {e}"))?;
 
@@ -33,7 +41,14 @@ pub fn ensure_git_repo(path: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    if Command::new("git").arg("--version").output().is_err() {
+    let mut version_cmd = Command::new("git");
+    version_cmd.arg("--version");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        version_cmd.creation_flags(0x08000000);
+    }
+    if version_cmd.output().is_err() {
         return Err(
             "Git is not installed. Backups require git. Download it from: https://git-scm.com"
                 .to_string(),
