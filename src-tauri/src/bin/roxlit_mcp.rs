@@ -870,13 +870,17 @@ fn tool_telemetry_track(id: Value, arguments: &Value) -> Value {
         None => return mcp_error_result(id, "'properties' parameter is required"),
     };
 
-    // Use run_code to set the attribute on the instance
+    // Use run_code to register the instance with the telemetry module
     let code = format!(
         r#"
 local inst = {}
 if inst then
-    inst:SetAttribute("_roxlit_track", "{}")
-    print("[Telemetry] Tracking " .. inst:GetFullName() .. ": {}")
+    if _G._roxlit_telemetry then
+        _G._roxlit_telemetry:track(inst, "{}")
+        print("[Telemetry] Tracking " .. inst:GetFullName() .. ": {}")
+    else
+        warn("[Telemetry] Telemetry module not running. Is the Roxlit plugin loaded?")
+    end
 else
     warn("[Telemetry] Instance not found: {}")
 end
@@ -899,8 +903,12 @@ fn tool_telemetry_stop(id: Value, arguments: &Value) -> Value {
         r#"
 local inst = {}
 if inst then
-    inst:SetAttribute("_roxlit_track", nil)
-    print("[Telemetry] Stopped tracking " .. inst:GetFullName())
+    if _G._roxlit_telemetry then
+        _G._roxlit_telemetry:untrack(inst)
+        print("[Telemetry] Stopped tracking " .. inst:GetFullName())
+    else
+        warn("[Telemetry] Telemetry module not running")
+    end
 else
     warn("[Telemetry] Instance not found: {}")
 end

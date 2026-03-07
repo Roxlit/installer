@@ -190,7 +190,7 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 - `backup_list` — List all backups with IDs, names, and timestamps.
 - `backup_restore` — Revert all files to a backup state. Automatically saves current state first (so you can undo).
 - `backup_diff` — Show what changed since a backup was created.
-- `telemetry_track` — Start tracking properties of an instance in real-time. Pass instance path and comma-separated property names. Uses `_roxlit_track` attribute under the hood.
+- `telemetry_track` — Start tracking properties of an instance in real-time. Pass instance path and comma-separated property names. Registers directly with the plugin's telemetry module.
 - `telemetry_stop` — Stop tracking an instance. Removes the `_roxlit_track` attribute.
 - `telemetry_get` — Read telemetry data. Supports `instance_name` filter and `tail` parameter. Returns timestamped property snapshots.
 - `telemetry_clear` — Clear the telemetry log file.
