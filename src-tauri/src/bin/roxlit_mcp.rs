@@ -215,6 +215,74 @@ fn handle_tools_list(id: Value) -> Value {
                         },
                         "required": ["project_path", "id"]
                     }
+                },
+                {
+                    "name": "telemetry_track",
+                    "description": "Start tracking properties of an instance in Roblox Studio. Sets the _roxlit_track attribute via run_code. The Roxlit plugin will automatically sample the specified properties and log changes to telemetry.log. Use this to observe physics behavior (position, velocity, rotation) without adding Debug.print() to scripts.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "instance_path": {
+                                "type": "string",
+                                "description": "Dot-separated path to the instance (e.g. 'Workspace.motorcycle_1_V2', 'Workspace.Player.HumanoidRootPart')"
+                            },
+                            "properties": {
+                                "type": "string",
+                                "description": "Comma-separated property names to track (e.g. 'CFrame,AssemblyLinearVelocity,AssemblyAngularVelocity')"
+                            }
+                        },
+                        "required": ["instance_path", "properties"]
+                    }
+                },
+                {
+                    "name": "telemetry_stop",
+                    "description": "Stop tracking an instance. Removes the _roxlit_track attribute.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "instance_path": {
+                                "type": "string",
+                                "description": "Dot-separated path to the instance to stop tracking"
+                            }
+                        },
+                        "required": ["instance_path"]
+                    }
+                },
+                {
+                    "name": "telemetry_get",
+                    "description": "Read telemetry data from the current session. Returns tracked property changes over time. Use 'tail' to limit output. Use 'instance' to filter by instance name. Use 'only_changes' to skip repeated values.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the project directory"
+                            },
+                            "instance": {
+                                "type": "string",
+                                "description": "Filter by instance name (e.g. 'motorcycle_1_V2'). Omit for all instances."
+                            },
+                            "tail": {
+                                "type": "integer",
+                                "description": "Only return the last N lines (0 = all)"
+                            }
+                        },
+                        "required": ["project_path"]
+                    }
+                },
+                {
+                    "name": "telemetry_clear",
+                    "description": "Clear all telemetry data for the current session. Use when starting a new debugging investigation.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the project directory"
+                            }
+                        },
+                        "required": ["project_path"]
+                    }
                 }
             ]
         }
@@ -233,6 +301,10 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
         "backup_list" => tool_backup_list(id, &arguments),
         "backup_restore" => tool_backup_restore(id, &arguments),
         "backup_diff" => tool_backup_diff(id, &arguments),
+        "telemetry_track" => tool_telemetry_track(id, &arguments),
+        "telemetry_stop" => tool_telemetry_stop(id, &arguments),
+        "telemetry_get" => tool_telemetry_get(id, &arguments),
+        "telemetry_clear" => tool_telemetry_clear(id, &arguments),
         _ => json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -784,6 +856,143 @@ fn tool_backup_diff(id: Value, arguments: &Value) -> Value {
     };
 
     mcp_result(id, &output)
+}
+
+// ─── Telemetry tools ────────────────────────────────────────────────────────
+
+fn tool_telemetry_track(id: Value, arguments: &Value) -> Value {
+    let instance_path = match arguments["instance_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'instance_path' parameter is required"),
+    };
+    let properties = match arguments["properties"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'properties' parameter is required"),
+    };
+
+    // Use run_code to set the attribute on the instance
+    let code = format!(
+        r#"
+local inst = {}
+if inst then
+    inst:SetAttribute("_roxlit_track", "{}")
+    print("[Telemetry] Tracking " .. inst:GetFullName() .. ": {}")
+else
+    warn("[Telemetry] Instance not found: {}")
+end
+"#,
+        instance_path, properties, properties, instance_path
+    );
+
+    // Forward to run_code
+    let run_args = json!({ "code": code });
+    tool_run_code(id, &run_args)
+}
+
+fn tool_telemetry_stop(id: Value, arguments: &Value) -> Value {
+    let instance_path = match arguments["instance_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'instance_path' parameter is required"),
+    };
+
+    let code = format!(
+        r#"
+local inst = {}
+if inst then
+    inst:SetAttribute("_roxlit_track", nil)
+    print("[Telemetry] Stopped tracking " .. inst:GetFullName())
+else
+    warn("[Telemetry] Instance not found: {}")
+end
+"#,
+        instance_path, instance_path
+    );
+
+    let run_args = json!({ "code": code });
+    tool_run_code(id, &run_args)
+}
+
+fn tool_telemetry_get(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'project_path' parameter is required"),
+    };
+
+    let instance_filter = arguments["instance"].as_str().unwrap_or("");
+    let tail = arguments["tail"]
+        .as_u64()
+        .or_else(|| arguments["tail"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0) as usize;
+
+    let telemetry_file = std::path::Path::new(project_path)
+        .join(".roxlit")
+        .join("logs")
+        .join("telemetry.log");
+
+    if !telemetry_file.exists() {
+        return mcp_result(id, "No telemetry data yet. Use telemetry_track to start tracking an instance, then playtest.");
+    }
+
+    let content = match std::fs::read_to_string(&telemetry_file) {
+        Ok(c) => c,
+        Err(e) => return mcp_error_result(id, &format!("Error reading telemetry: {e}")),
+    };
+
+    // Filter by instance name if specified
+    let filtered: Vec<&str> = if instance_filter.is_empty() {
+        content.lines().collect()
+    } else {
+        content
+            .lines()
+            .filter(|line| line.contains(instance_filter))
+            .collect()
+    };
+
+    // Apply tail
+    let lines = if tail > 0 && filtered.len() > tail {
+        &filtered[filtered.len() - tail..]
+    } else {
+        &filtered[..]
+    };
+
+    let output = lines.join("\n");
+
+    if output.is_empty() {
+        return mcp_result(
+            id,
+            &format!("No telemetry data{}", if !instance_filter.is_empty() { format!(" for '{instance_filter}'") } else { String::new() }),
+        );
+    }
+
+    // Truncate if too large
+    let output = if output.len() > 15_000 {
+        format!(
+            "[...truncated, showing last ~15KB...]\n{}",
+            &output[output.len() - 15_000..]
+        )
+    } else {
+        output
+    };
+
+    mcp_result(id, &output)
+}
+
+fn tool_telemetry_clear(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'project_path' parameter is required"),
+    };
+
+    let telemetry_file = std::path::Path::new(project_path)
+        .join(".roxlit")
+        .join("logs")
+        .join("telemetry.log");
+
+    if telemetry_file.exists() {
+        let _ = std::fs::write(&telemetry_file, "");
+    }
+
+    mcp_result(id, "Telemetry data cleared.")
 }
 
 // ─── Git helpers ────────────────────────────────────────────────────────────

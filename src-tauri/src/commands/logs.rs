@@ -598,6 +598,40 @@ async fn handle_connection(
         return;
     }
 
+    // POST /telemetry — receives telemetry data from Studio plugin
+    if first_line.starts_with("POST /telemetry") {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            let body = &request[body_start + 4..];
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Some(lines) = val["lines"].as_str() {
+                    // Write to telemetry.log in the project's .roxlit/logs/ dir
+                    let guard = status.lock().await;
+                    if !guard.project_path.is_empty() {
+                        let logs_dir = std::path::Path::new(&guard.project_path)
+                            .join(".roxlit")
+                            .join("logs");
+                        drop(guard); // Release lock before file I/O
+                        let _ = tokio::fs::create_dir_all(&logs_dir).await;
+                        let telemetry_file = logs_dir.join("telemetry.log");
+                        if let Ok(mut f) = tokio::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&telemetry_file)
+                            .await
+                        {
+                            use tokio::io::AsyncWriteExt;
+                            let _ = f.write_all(lines.as_bytes()).await;
+                            let _ = f.write_all(b"\n").await;
+                        }
+                    }
+                }
+            }
+        }
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
     // ─── MCP endpoints ────────────────────────────────────────────────────
 
     // POST /mcp/run-code — MCP sends Luau code, blocks until plugin returns result

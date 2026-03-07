@@ -162,7 +162,7 @@ pub fn roxlit_mcp_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.11.0";
+pub const CONTEXT_VERSION: &str = "0.12.0";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -190,6 +190,38 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 - `backup_list` — List all backups with IDs, names, and timestamps.
 - `backup_restore` — Revert all files to a backup state. Automatically saves current state first (so you can undo).
 - `backup_diff` — Show what changed since a backup was created.
+- `telemetry_track` — Start tracking properties of an instance in real-time. Pass instance path and comma-separated property names. Uses `_roxlit_track` attribute under the hood.
+- `telemetry_stop` — Stop tracking an instance. Removes the `_roxlit_track` attribute.
+- `telemetry_get` — Read telemetry data. Supports `instance_name` filter and `tail` parameter. Returns timestamped property snapshots.
+- `telemetry_clear` — Clear the telemetry log file.
+
+### Real-Time Telemetry
+
+Use telemetry to observe how instances behave during playtests WITHOUT pausing or adding print statements.
+
+**When to use:**
+- Debugging physics (track CFrame, AssemblyLinearVelocity, AssemblyAngularVelocity)
+- Monitoring animations (track CFrame of joints/parts)
+- Verifying UI updates (track Position, Size, Text of GUI elements)
+- Tuning gameplay (track Health, Speed, or custom attributes)
+
+**Workflow:**
+1. `telemetry_track` on the instance(s) you care about
+2. Ask user to playtest or interact
+3. `telemetry_get` to see the data (filter by instance name if needed)
+4. `telemetry_stop` when done
+
+**Example — debug a vehicle:**
+```
+telemetry_track(instance_path: "Workspace.MyCar.Chassis", properties: "CFrame,AssemblyLinearVelocity")
+-- User drives the car --
+telemetry_get(instance_name: "Chassis", tail: 20)
+-- See position/velocity over time --
+telemetry_stop(instance_path: "Workspace.MyCar.Chassis")
+```
+
+**Format:** Each line is `[T+seconds] [CLIENT/SERVER] InstanceName Property: value | Property: value`
+Only significant changes are logged (position > 0.1 studs, angle > 0.5 degrees, scalar > 0.01).
 
 **Do NOT use MCP to create instances.** Write .model.json files instead — Rojo syncs them automatically.
 
