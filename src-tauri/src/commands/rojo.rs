@@ -25,6 +25,7 @@ pub enum RojoEvent {
 pub struct RojoProcess {
     pub child: Arc<Mutex<Option<tokio::process::Child>>>,
     pub abort_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    pub backup_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl Default for RojoProcess {
@@ -32,6 +33,7 @@ impl Default for RojoProcess {
         Self {
             child: Arc::new(Mutex::new(None)),
             abort_handle: Arc::new(Mutex::new(None)),
+            backup_handle: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -48,6 +50,12 @@ impl RojoProcess {
         }
         // Abort the reader task
         if let Ok(mut guard) = self.abort_handle.try_lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+            }
+        }
+        // Abort the auto-backup timer
+        if let Ok(mut guard) = self.backup_handle.try_lock() {
             if let Some(handle) = guard.take() {
                 handle.abort();
             }
@@ -333,6 +341,40 @@ pub async fn start_rojo(
         *guard = Some(reader_handle);
     }
 
+    // Start auto-backup timer (every 10 minutes)
+    let backup_project_path = project_path.clone();
+    let backup_handle = tokio::spawn(async move {
+        use crate::commands::backup;
+
+        // Wait 2 minutes before first backup (let user start working)
+        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+
+        let interval = std::time::Duration::from_secs(600); // 10 minutes
+        let max_backup_bytes: u64 = 100 * 1024 * 1024; // 100 MB default limit
+
+        loop {
+            // Create auto-backup (blocking git ops in spawn_blocking)
+            let path = backup_project_path.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                let name = format!("auto-{}", backup::now_timestamp());
+                match backup::create_backup(&path, &name) {
+                    Ok(_) => {
+                        // Cleanup old auto-backups if over size limit
+                        backup::cleanup_by_size(&path, max_backup_bytes);
+                    }
+                    Err(_) => {} // No changes or git not available — skip silently
+                }
+            })
+            .await;
+
+            tokio::time::sleep(interval).await;
+        }
+    });
+    {
+        let mut guard = state.backup_handle.lock().await;
+        *guard = Some(backup_handle);
+    }
+
     Ok(())
 }
 
@@ -375,6 +417,14 @@ pub async fn stop_rojo(
     // Abort the reader task
     {
         let mut guard = state.abort_handle.lock().await;
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+    }
+
+    // Stop auto-backup timer
+    {
+        let mut guard = state.backup_handle.lock().await;
         if let Some(handle) = guard.take() {
             handle.abort();
         }

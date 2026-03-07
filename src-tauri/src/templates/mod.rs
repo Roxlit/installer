@@ -209,6 +209,16 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 
 **Rule 6 — When in doubt, backup.** If you're not sure whether something will break, create a backup. The cost is zero. The cost of NOT backing up is starting over from scratch.
 
+### Auto-Backups
+
+Roxlit automatically creates backups every 10 minutes while "Start Development" is active. These are named `auto-{timestamp}` and appear in `backup_list` alongside your manual backups. Use them to:
+
+- **Recover from mistakes** — if the user says "it was working 20 minutes ago", check `backup_list` for the nearest auto-backup and restore it.
+- **Compare states** — use `backup_diff` with an auto-backup ID to see what changed in the last 10-20 minutes.
+- **Don't rely only on auto-backups** — they happen every 10min, so you can lose up to 10min of work. Still create manual backups before risky changes (Rules 1-3 above).
+
+Auto-backups are cleaned up automatically when total backup storage exceeds 100MB (oldest auto-backups removed first, manual backups are never auto-deleted).
+
 ### MCP Connection Issues
 
 If `run_code` or other MCP tools fail with connection errors, tell the user:
@@ -470,6 +480,7 @@ src/                                ← All game code and instances (synced by R
 - Require modules relatively: `require(script.Parent.ModuleName)`
 - Prefer `task.wait()` over `wait()`, `task.spawn()` over `spawn()`
 - Add `--!strict` at the top of every file
+- In `string.gsub()` replacements, `%` is a special character. Escape it as `%%` or use a function replacement: `gsub(pattern, function() return str end)`
 
 ## Instance Organization
 
