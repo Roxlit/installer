@@ -431,6 +431,78 @@ The filename (minus `.model.json`) becomes the instance Name. Rojo places it und
 - To delete an instance from Studio, delete the .model.json file
 - .model.json files are versionable in git and diffable — this is a huge advantage over MCP-based creation
 
+## Creating Animations via run_code
+
+You can create animations programmatically using `run_code`. This is useful for character animations (walk, idle, attack, get-up, etc.) without needing the Animation Editor in Studio.
+
+### How it works
+
+1. **Create a KeyframeSequence** with Keyframes, each containing Poses for joints
+2. **Register it** with KeyframeSequenceProvider to get an animation asset ID
+3. **Play it** via Animator:LoadAnimation()
+
+### Example — simple wave animation
+
+```lua
+run_code([[
+local KFS = Instance.new("KeyframeSequence")
+KFS.Name = "Wave"
+KFS.Loop = false
+
+-- Keyframe at t=0: arm down (neutral)
+local kf0 = Instance.new("Keyframe")
+kf0.Time = 0
+local rootPose = Instance.new("Pose")
+rootPose.Name = "HumanoidRootPart"
+-- Right shoulder pose
+local rShoulder = Instance.new("Pose")
+rShoulder.Name = "Right Shoulder"
+rShoulder.CFrame = CFrame.Angles(0, 0, 0)
+rootPose:AddSubPose(rShoulder)
+kf0:AddPose(rootPose)
+KFS:AddKeyframe(kf0)
+
+-- Keyframe at t=0.5: arm up
+local kf1 = Instance.new("Keyframe")
+kf1.Time = 0.5
+local rootPose1 = Instance.new("Pose")
+rootPose1.Name = "HumanoidRootPart"
+local rShoulder1 = Instance.new("Pose")
+rShoulder1.Name = "Right Shoulder"
+rShoulder1.CFrame = CFrame.Angles(0, 0, math.rad(-150))
+rootPose1:AddSubPose(rShoulder1)
+kf1:AddPose(rootPose1)
+KFS:AddKeyframe(kf1)
+
+-- Register and get asset ID
+local KSP = game:GetService("KeyframeSequenceProvider")
+local assetId = KSP:RegisterKeyframeSequenceAsync(KFS)
+print("Animation registered:", assetId)
+]])
+```
+
+### Joint names (R15 rig)
+
+Use these as Pose names — they match Motor6D names in the character:
+- `Root Hip` — torso to root
+- `Left Hip`, `Right Hip` — legs
+- `Left Shoulder`, `Right Shoulder` — arms
+- `Left Knee`, `Right Knee` — lower legs
+- `Left Ankle`, `Right Ankle` — feet
+- `Left Elbow`, `Right Elbow` — forearms
+- `Left Wrist`, `Right Wrist` — hands
+- `Neck` — head
+- `Waist` — upper/lower torso
+
+### Tips
+
+- **Iterate**: Create the animation, play it, adjust CFrame angles, repeat. Ask the user if it looks right.
+- **Small angle changes**: When refining, change angles by at least 5-10 degrees per iteration — smaller changes are invisible.
+- **Log what you changed**: Always tell the user what angles you modified and why.
+- **CFrame.Angles uses radians**: Use `math.rad(degrees)` for readability.
+- **Easing**: Set `kf.EasingStyle` and `kf.EasingDirection` on Keyframes for smooth transitions.
+- **Priority**: Set `AnimationTrack.Priority` to `Enum.AnimationPriority.Action` for one-shot animations that override idle/walk.
+
 "#;
 
     format!(
