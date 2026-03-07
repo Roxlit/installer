@@ -90,6 +90,7 @@ pub async fn start_rojo(
     log_server_state: tauri::State<'_, LogServerState>,
     launcher_status: tauri::State<'_, LauncherStatus>,
     mcp_state: tauri::State<'_, crate::commands::logs::McpState>,
+    telemetry_state: tauri::State<'_, crate::commands::logs::TelemetryState>,
 ) -> Result<()> {
     // Check if already running
     {
@@ -222,7 +223,8 @@ pub async fn start_rojo(
     if let (Some(ref sys_tx), Some(ref out_tx)) = (&system_sender, &output_sender) {
         let shared_status = launcher_status.shared();
         let shared_mcp = mcp_state.shared();
-        if let Some(handle) = crate::commands::logs::start_log_server(sys_tx.clone(), out_tx.clone(), shared_status, shared_mcp).await {
+        let shared_telemetry = telemetry_state.shared();
+        if let Some(handle) = crate::commands::logs::start_log_server(sys_tx.clone(), out_tx.clone(), shared_status, shared_mcp, shared_telemetry).await {
             log_server_state.set_handle(handle).await;
             send_log(sys_tx, "roxlit", "Studio log server started on 127.0.0.1:19556");
         }

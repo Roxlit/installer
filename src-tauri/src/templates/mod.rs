@@ -190,14 +190,17 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 - `backup_list` — List all backups with IDs, names, and timestamps.
 - `backup_restore` — Revert all files to a backup state. Automatically saves current state first (so you can undo).
 - `backup_diff` — Show what changed since a backup was created.
-- `telemetry_track` — Start tracking properties of an instance in real-time. Pass instance path and comma-separated property names. Registers directly with the plugin's telemetry module.
-- `telemetry_stop` — Stop tracking an instance. Removes the `_roxlit_track` attribute.
-- `telemetry_get` — Read telemetry data. Supports `instance_name` filter and `tail` parameter. Returns timestamped property snapshots.
+- `telemetry_track` — Register an instance for real-time property tracking. Pass path, properties, and optional group. The instance does NOT need to exist — tracking activates automatically when it appears (e.g. during playtest). Names with spaces work.
+- `telemetry_stop` — Stop tracking. Pass `instance_path` for one tracker, or `group` to stop all in a group.
+- `telemetry_toggle` — Enable/disable a group without removing it (e.g. pause noisy trackers temporarily).
+- `telemetry_get` — Read telemetry data. Supports `instance` filter and `tail` parameter.
 - `telemetry_clear` — Clear the telemetry log file.
 
 ### Real-Time Telemetry
 
 Use telemetry to observe how instances behave during playtests WITHOUT pausing or adding print statements.
+
+**Key feature:** Trackers are **deferred** — register them anytime, they activate when the instance exists. Perfect for instances that only appear during playtest (spawned vehicles, player characters, etc.).
 
 **When to use:**
 - Debugging physics (track CFrame, AssemblyLinearVelocity, AssemblyAngularVelocity)
@@ -206,21 +209,26 @@ Use telemetry to observe how instances behave during playtests WITHOUT pausing o
 - Tuning gameplay (track Health, Speed, or custom attributes)
 
 **Workflow:**
-1. `telemetry_track` on the instance(s) you care about
-2. Ask user to playtest or interact
-3. `telemetry_get` to see the data (filter by instance name if needed)
-4. `telemetry_stop` when done
+1. `telemetry_track` — register trackers (works even before playtest)
+2. User starts playtest → trackers activate automatically
+3. `telemetry_get` to see the data
+4. `telemetry_stop` or `telemetry_toggle` when done
 
-**Example — debug a vehicle:**
+**Example — debug a vehicle with groups:**
 ```
-telemetry_track(instance_path: "Workspace.MyCar.Chassis", properties: "CFrame,AssemblyLinearVelocity")
--- User drives the car --
-telemetry_get(instance_name: "Chassis", tail: 20)
--- See position/velocity over time --
-telemetry_stop(instance_path: "Workspace.MyCar.Chassis")
+telemetry_track(instance_path: "Workspace.motorcycle_1_V2 Motorcycle.DriveSeat", properties: "CFrame,AssemblyLinearVelocity", group: "moto-body")
+telemetry_track(instance_path: "Workspace.motorcycle_1_V2 Motorcycle.WheelFront", properties: "CFrame,AssemblyAngularVelocity", group: "moto-wheels")
+telemetry_track(instance_path: "Workspace.motorcycle_1_V2 Motorcycle.WheelRear", properties: "CFrame,AssemblyAngularVelocity", group: "moto-wheels")
+-- User playtests and drives --
+telemetry_get(tail: 30)
+-- Too much data? Disable wheels, keep body --
+telemetry_toggle(group: "moto-wheels", enabled: false)
+-- Done debugging --
+telemetry_stop(group: "moto-body")
+telemetry_stop(group: "moto-wheels")
 ```
 
-**Format:** Each line is `[T+seconds] [CLIENT/SERVER] InstanceName Property: value | Property: value`
+**Format:** Each line is `[T+seconds] [CLIENT/SERVER] [group] InstanceName Property: value | Property: value`
 Only significant changes are logged (position > 0.1 studs, angle > 0.5 degrees, scalar > 0.01).
 
 **Do NOT use MCP to create instances.** Write .model.json files instead — Rojo syncs them automatically.

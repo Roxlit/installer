@@ -218,17 +218,21 @@ fn handle_tools_list(id: Value) -> Value {
                 },
                 {
                     "name": "telemetry_track",
-                    "description": "Start tracking properties of an instance in Roblox Studio. Sets the _roxlit_track attribute via run_code. The Roxlit plugin will automatically sample the specified properties and log changes to telemetry.log. Use this to observe physics behavior (position, velocity, rotation) without adding Debug.print() to scripts.",
+                    "description": "Register an instance for real-time property tracking. The instance does NOT need to exist yet — tracking activates automatically when the instance appears (e.g. during playtest). Names with spaces are supported. Use 'group' to organize trackers for batch enable/disable.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "instance_path": {
                                 "type": "string",
-                                "description": "Dot-separated path to the instance (e.g. 'Workspace.motorcycle_1_V2', 'Workspace.Player.HumanoidRootPart')"
+                                "description": "Dot-separated path to the instance (e.g. 'Workspace.motorcycle_1_V2 Motorcycle.DriveSeat', 'Workspace.Player.HumanoidRootPart'). Names with spaces are supported."
                             },
                             "properties": {
                                 "type": "string",
                                 "description": "Comma-separated property names to track (e.g. 'CFrame,AssemblyLinearVelocity,AssemblyAngularVelocity')"
+                            },
+                            "group": {
+                                "type": "string",
+                                "description": "Optional group name for batch enable/disable (e.g. 'moto-wheels', 'player')"
                             }
                         },
                         "required": ["instance_path", "properties"]
@@ -236,16 +240,37 @@ fn handle_tools_list(id: Value) -> Value {
                 },
                 {
                     "name": "telemetry_stop",
-                    "description": "Stop tracking an instance. Removes the _roxlit_track attribute.",
+                    "description": "Stop tracking. Pass 'instance_path' to stop a specific tracker, or 'group' to stop all trackers in a group.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "instance_path": {
                                 "type": "string",
-                                "description": "Dot-separated path to the instance to stop tracking"
+                                "description": "Path of the instance to stop tracking"
+                            },
+                            "group": {
+                                "type": "string",
+                                "description": "Stop all trackers in this group"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "telemetry_toggle",
+                    "description": "Enable or disable a telemetry group without removing it. Useful to temporarily pause noisy trackers.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "group": {
+                                "type": "string",
+                                "description": "Group name to enable/disable"
+                            },
+                            "enabled": {
+                                "type": "boolean",
+                                "description": "true to enable, false to disable"
                             }
                         },
-                        "required": ["instance_path"]
+                        "required": ["group", "enabled"]
                     }
                 },
                 {
@@ -303,6 +328,7 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
         "backup_diff" => tool_backup_diff(id, &arguments),
         "telemetry_track" => tool_telemetry_track(id, &arguments),
         "telemetry_stop" => tool_telemetry_stop(id, &arguments),
+        "telemetry_toggle" => tool_telemetry_toggle(id, &arguments),
         "telemetry_get" => tool_telemetry_get(id, &arguments),
         "telemetry_clear" => tool_telemetry_clear(id, &arguments),
         _ => json!({
@@ -860,6 +886,27 @@ fn tool_backup_diff(id: Value, arguments: &Value) -> Value {
 
 // ─── Telemetry tools ────────────────────────────────────────────────────────
 
+/// POST JSON to a launcher endpoint. Returns Ok(body) or Err(message).
+fn http_post_json(url: &str, body: &str) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("HTTP client error: {e}"))?;
+
+    let resp = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .map_err(|e| format!("Connection failed: {e}"))?;
+
+    if resp.status().is_success() {
+        Ok(resp.text().unwrap_or_default())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
+}
+
 fn tool_telemetry_track(id: Value, arguments: &Value) -> Value {
     let instance_path = match arguments["instance_path"].as_str() {
         Some(p) => p,
@@ -869,55 +916,65 @@ fn tool_telemetry_track(id: Value, arguments: &Value) -> Value {
         Some(p) => p,
         None => return mcp_error_result(id, "'properties' parameter is required"),
     };
+    let group = arguments["group"].as_str().unwrap_or("default");
 
-    // Use run_code to register the instance with the telemetry module
-    let code = format!(
-        r#"
-local inst = {}
-if inst then
-    if _G._roxlit_telemetry then
-        _G._roxlit_telemetry:track(inst, "{}")
-        print("[Telemetry] Tracking " .. inst:GetFullName() .. ": {}")
-    else
-        warn("[Telemetry] Telemetry module not running. Is the Roxlit plugin loaded?")
-    end
-else
-    warn("[Telemetry] Instance not found: {}")
-end
-"#,
-        instance_path, properties, properties, instance_path
-    );
+    // POST to launcher — tracker is stored in memory, plugin polls for it
+    let body = json!({
+        "path": instance_path,
+        "properties": properties,
+        "group": group,
+    });
 
-    // Forward to run_code
-    let run_args = json!({ "code": code });
-    tool_run_code(id, &run_args)
+    let url = format!("{LAUNCHER_URL}/telemetry/track");
+    match http_post_json(&url, &body.to_string()) {
+        Ok(_) => mcp_result(id, &format!(
+            "Tracking registered: {} [{}] (group: {})\nThe plugin will start sampling when the instance exists (e.g. during playtest).",
+            instance_path, properties, group
+        )),
+        Err(e) => mcp_error_result(id, &format!("Failed to register tracker: {e}. Is the Roxlit launcher running?")),
+    }
 }
 
 fn tool_telemetry_stop(id: Value, arguments: &Value) -> Value {
-    let instance_path = match arguments["instance_path"].as_str() {
-        Some(p) => p,
-        None => return mcp_error_result(id, "'instance_path' parameter is required"),
+    let instance_path = arguments["instance_path"].as_str();
+    let group = arguments["group"].as_str();
+
+    if instance_path.is_none() && group.is_none() {
+        return mcp_error_result(id, "Either 'instance_path' or 'group' parameter is required");
+    }
+
+    let body = if let Some(path) = instance_path {
+        json!({ "path": path })
+    } else {
+        json!({ "group": group.unwrap() })
     };
 
-    let code = format!(
-        r#"
-local inst = {}
-if inst then
-    if _G._roxlit_telemetry then
-        _G._roxlit_telemetry:untrack(inst)
-        print("[Telemetry] Stopped tracking " .. inst:GetFullName())
-    else
-        warn("[Telemetry] Telemetry module not running")
-    end
-else
-    warn("[Telemetry] Instance not found: {}")
-end
-"#,
-        instance_path, instance_path
-    );
+    let url = format!("{LAUNCHER_URL}/telemetry/untrack");
+    match http_post_json(&url, &body.to_string()) {
+        Ok(_) => {
+            let target = instance_path.unwrap_or_else(|| group.unwrap());
+            mcp_result(id, &format!("Stopped tracking: {target}"))
+        }
+        Err(e) => mcp_error_result(id, &format!("Failed to stop tracker: {e}")),
+    }
+}
 
-    let run_args = json!({ "code": code });
-    tool_run_code(id, &run_args)
+fn tool_telemetry_toggle(id: Value, arguments: &Value) -> Value {
+    let group = match arguments["group"].as_str() {
+        Some(g) => g,
+        None => return mcp_error_result(id, "'group' parameter is required"),
+    };
+    let enabled = arguments["enabled"].as_bool().unwrap_or(true);
+
+    let body = json!({ "group": group, "enabled": enabled });
+    let url = format!("{LAUNCHER_URL}/telemetry/toggle");
+    match http_post_json(&url, &body.to_string()) {
+        Ok(_) => {
+            let state = if enabled { "enabled" } else { "disabled" };
+            mcp_result(id, &format!("Group '{}' {}", group, state))
+        }
+        Err(e) => mcp_error_result(id, &format!("Failed to toggle group: {e}")),
+    }
 }
 
 fn tool_telemetry_get(id: Value, arguments: &Value) -> Value {
