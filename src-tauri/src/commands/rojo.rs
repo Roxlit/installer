@@ -224,6 +224,21 @@ pub async fn start_rojo(
         let shared_status = launcher_status.shared();
         let shared_mcp = mcp_state.shared();
         let shared_telemetry = telemetry_state.shared();
+        // Load persisted telemetry trackers
+        {
+            let saved = crate::commands::logs::load_trackers(&project_path).await;
+            if !saved.is_empty() {
+                let mut tg = shared_telemetry.lock().await;
+                tg.trackers = saved;
+                tg.project_path = project_path.clone();
+                let count = tg.trackers.len();
+                drop(tg);
+                send_log(sys_tx, "telemetry", &format!("Loaded {count} saved trackers"));
+            } else {
+                let mut tg = shared_telemetry.lock().await;
+                tg.project_path = project_path.clone();
+            }
+        }
         if let Some(handle) = crate::commands::logs::start_log_server(sys_tx.clone(), out_tx.clone(), shared_status, shared_mcp, shared_telemetry).await {
             log_server_state.set_handle(handle).await;
             send_log(sys_tx, "roxlit", "Studio log server started on 127.0.0.1:19556");

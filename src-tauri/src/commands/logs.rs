@@ -129,6 +129,7 @@ pub struct TelemetryState {
 
 pub(crate) struct TelemetryStateInner {
     pub(crate) trackers: Vec<TelemetryTracker>,
+    pub(crate) project_path: String,
 }
 
 impl Default for TelemetryState {
@@ -136,6 +137,7 @@ impl Default for TelemetryState {
         Self {
             inner: Arc::new(Mutex::new(TelemetryStateInner {
                 trackers: Vec::new(),
+                project_path: String::new(),
             })),
         }
     }
@@ -144,6 +146,30 @@ impl Default for TelemetryState {
 impl TelemetryState {
     pub fn shared(&self) -> Arc<Mutex<TelemetryStateInner>> {
         self.inner.clone()
+    }
+}
+
+fn trackers_file(project_path: &str) -> std::path::PathBuf {
+    std::path::Path::new(project_path).join(".roxlit").join("telemetry-trackers.json")
+}
+
+async fn save_trackers(trackers: &[TelemetryTracker], project_path: &str) {
+    if project_path.is_empty() { return; }
+    let path = trackers_file(project_path);
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Ok(json) = serde_json::to_string_pretty(trackers) {
+        let _ = tokio::fs::write(&path, json).await;
+    }
+}
+
+pub(crate) async fn load_trackers(project_path: &str) -> Vec<TelemetryTracker> {
+    if project_path.is_empty() { return Vec::new(); }
+    let path = trackers_file(project_path);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
+        Err(_) => Vec::new(),
     }
 }
 
@@ -667,7 +693,10 @@ async fn handle_connection(
                 guard.trackers.retain(|t| t.path != tracker.path);
                 let msg = format!("Telemetry: tracking {} ({})", tracker.path, tracker.properties);
                 guard.trackers.push(tracker);
+                let trackers_clone = guard.trackers.clone();
+                let pp = guard.project_path.clone();
                 drop(guard);
+                save_trackers(&trackers_clone, &pp).await;
                 send_log(&system_tx, "telemetry", &msg);
             }
         }
@@ -689,6 +718,10 @@ async fn handle_connection(
                     guard.trackers.retain(|t| t.group != group);
                     send_log(&system_tx, "telemetry", &format!("Telemetry: stopped group {group}"));
                 }
+                let trackers_clone = guard.trackers.clone();
+                let pp = guard.project_path.clone();
+                drop(guard);
+                save_trackers(&trackers_clone, &pp).await;
             }
         }
         let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
@@ -710,6 +743,10 @@ async fn handle_connection(
                         }
                     }
                     let state = if enabled { "enabled" } else { "disabled" };
+                    let trackers_clone = guard.trackers.clone();
+                    let pp = guard.project_path.clone();
+                    drop(guard);
+                    save_trackers(&trackers_clone, &pp).await;
                     send_log(&system_tx, "telemetry", &format!("Telemetry: {state} group {group}"));
                 }
             }
