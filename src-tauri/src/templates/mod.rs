@@ -592,7 +592,11 @@ src/                                ← All game code and instances (synced by R
 - Require modules relatively: `require(script.Parent.ModuleName)`
 - Prefer `task.wait()` over `wait()`, `task.spawn()` over `spawn()`
 - Add `--!strict` at the top of every file
-- In `string.gsub()` replacements, `%` is a special character. Escape it as `%%` or use a function replacement: `gsub(pattern, function() return str end)`
+- **CRITICAL `string.gsub` rule:** The replacement string treats `%` as special. Code like `gsub(pat, newStr)` where `newStr` contains `%` (e.g. `string.format("%.1f", x)`) will ERROR with "invalid use of '%'". **ALWAYS use the function form for literal replacement:**
+  ```lua
+  src:gsub(pattern, function() return newString end)
+  ```
+  This applies to ANY gsub where the replacement might contain `%`, `string.format`, format specifiers, or Lua patterns. Never use the string form unless you are 100% certain the replacement has no `%`.
 
 ## Instance Organization
 
