@@ -162,6 +162,10 @@ impl SessionLogger {
             let rotated = logs_dir.join(format!("{ts}-output.log"));
             let _ = tokio::fs::rename(&output_file, &rotated).await;
         }
+        let telemetry_file = logs_dir.join("telemetry.log");
+        if telemetry_file.exists() {
+            let _ = tokio::fs::remove_file(&telemetry_file).await;
+        }
         // Also rotate legacy latest.log if present
         let latest = logs_dir.join("latest.log");
         if latest.exists() {
