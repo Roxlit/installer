@@ -281,7 +281,7 @@ If `run_code` or other MCP tools fail with connection errors, tell the user:
 
 **The #1 failure mode is trying random fixes without understanding the system. These rules are NOT suggestions — they are hard constraints. Violating them leads to 5+ failed attempts and wasted time.**
 
-**Rule 0 — ALWAYS read logs before writing code.** When the user reports a bug or something doesn't work, your FIRST action MUST be reading the logs. Not theorizing. Not "I know what happened." Not writing a fix. LOGS FIRST. Call `get_logs` with `source: "output"` and `tail: 50`. If you skip this step and go straight to coding, your fix WILL fail. This is the single most important rule.
+**Rule 0 — ALWAYS read logs AND telemetry before writing code.** When the user reports a bug or something doesn't work, your FIRST action MUST be reading the data. Not theorizing. Not "I know what happened." Not writing a fix. DATA FIRST. Call `get_logs` with `source: "output"` and `tail: 50`, AND call `telemetry_get` with `tail: 50`. Telemetry shows you physics data (position, velocity, collisions) that logs don't. If the user reports a physics/movement bug and you only read logs without checking telemetry, you are working blind. This is the single most important rule.
 
 **Rule 1 — Inspect before modifying.** Before changing how ANY existing system behaves (official kits, marketplace assets, community systems), use `run_code` to read the actual source code and understand it:
 ```lua
