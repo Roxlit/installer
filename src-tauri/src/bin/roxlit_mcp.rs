@@ -215,6 +215,99 @@ fn handle_tools_list(id: Value) -> Value {
                         },
                         "required": ["project_path", "id"]
                     }
+                },
+                {
+                    "name": "telemetry_track",
+                    "description": "Register an instance for real-time property tracking. The instance does NOT need to exist yet — tracking activates automatically when the instance appears (e.g. during playtest). Names with spaces are supported. Use 'group' to organize trackers for batch enable/disable.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "instance_path": {
+                                "type": "string",
+                                "description": "Dot-separated path to the instance (e.g. 'Workspace.motorcycle_1_V2 Motorcycle.DriveSeat', 'Workspace.Player.HumanoidRootPart'). Names with spaces are supported."
+                            },
+                            "properties": {
+                                "type": "string",
+                                "description": "Comma-separated property names to track (e.g. 'CFrame,AssemblyLinearVelocity,AssemblyAngularVelocity')"
+                            },
+                            "group": {
+                                "type": "string",
+                                "description": "Optional group name for batch enable/disable (e.g. 'moto-wheels', 'player')"
+                            }
+                        },
+                        "required": ["instance_path", "properties"]
+                    }
+                },
+                {
+                    "name": "telemetry_stop",
+                    "description": "Stop tracking. Pass 'instance_path' to stop a specific tracker, or 'group' to stop all trackers in a group.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "instance_path": {
+                                "type": "string",
+                                "description": "Path of the instance to stop tracking"
+                            },
+                            "group": {
+                                "type": "string",
+                                "description": "Stop all trackers in this group"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "telemetry_toggle",
+                    "description": "Enable or disable a telemetry group without removing it. Useful to temporarily pause noisy trackers.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "group": {
+                                "type": "string",
+                                "description": "Group name to enable/disable"
+                            },
+                            "enabled": {
+                                "type": "boolean",
+                                "description": "true to enable, false to disable"
+                            }
+                        },
+                        "required": ["group", "enabled"]
+                    }
+                },
+                {
+                    "name": "telemetry_get",
+                    "description": "Read telemetry data from the current session. Returns tracked property changes over time. Use 'tail' to limit output. Use 'instance' to filter by instance name. Use 'only_changes' to skip repeated values.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the project directory"
+                            },
+                            "instance": {
+                                "type": "string",
+                                "description": "Filter by instance name (e.g. 'motorcycle_1_V2'). Omit for all instances."
+                            },
+                            "tail": {
+                                "type": "integer",
+                                "description": "Only return the last N lines (0 = all)"
+                            }
+                        },
+                        "required": ["project_path"]
+                    }
+                },
+                {
+                    "name": "telemetry_clear",
+                    "description": "Clear all telemetry data for the current session. Use when starting a new debugging investigation.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "Absolute path to the project directory"
+                            }
+                        },
+                        "required": ["project_path"]
+                    }
                 }
             ]
         }
@@ -233,6 +326,11 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
         "backup_list" => tool_backup_list(id, &arguments),
         "backup_restore" => tool_backup_restore(id, &arguments),
         "backup_diff" => tool_backup_diff(id, &arguments),
+        "telemetry_track" => tool_telemetry_track(id, &arguments),
+        "telemetry_stop" => tool_telemetry_stop(id, &arguments),
+        "telemetry_toggle" => tool_telemetry_toggle(id, &arguments),
+        "telemetry_get" => tool_telemetry_get(id, &arguments),
+        "telemetry_clear" => tool_telemetry_clear(id, &arguments),
         _ => json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -784,6 +882,182 @@ fn tool_backup_diff(id: Value, arguments: &Value) -> Value {
     };
 
     mcp_result(id, &output)
+}
+
+// ─── Telemetry tools ────────────────────────────────────────────────────────
+
+/// POST JSON to a launcher endpoint. Returns Ok(body) or Err(message).
+fn http_post_json(url: &str, body: &str) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("HTTP client error: {e}"))?;
+
+    let resp = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .map_err(|e| format!("Connection failed: {e}"))?;
+
+    if resp.status().is_success() {
+        Ok(resp.text().unwrap_or_default())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
+}
+
+fn tool_telemetry_track(id: Value, arguments: &Value) -> Value {
+    let instance_path = match arguments["instance_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'instance_path' parameter is required"),
+    };
+    let properties = match arguments["properties"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'properties' parameter is required"),
+    };
+    let group = arguments["group"].as_str().unwrap_or("default");
+
+    // POST to launcher — tracker is stored in memory, plugin polls for it
+    let body = json!({
+        "path": instance_path,
+        "properties": properties,
+        "group": group,
+    });
+
+    let url = format!("{LAUNCHER_URL}/telemetry/track");
+    match http_post_json(&url, &body.to_string()) {
+        Ok(_) => mcp_result(id, &format!(
+            "Tracking registered: {} [{}] (group: {})\nThe plugin will start sampling when the instance exists (e.g. during playtest).",
+            instance_path, properties, group
+        )),
+        Err(e) => mcp_error_result(id, &format!("Failed to register tracker: {e}. Is the Roxlit launcher running?")),
+    }
+}
+
+fn tool_telemetry_stop(id: Value, arguments: &Value) -> Value {
+    let instance_path = arguments["instance_path"].as_str();
+    let group = arguments["group"].as_str();
+
+    if instance_path.is_none() && group.is_none() {
+        return mcp_error_result(id, "Either 'instance_path' or 'group' parameter is required");
+    }
+
+    let body = if let Some(path) = instance_path {
+        json!({ "path": path })
+    } else {
+        json!({ "group": group.unwrap() })
+    };
+
+    let url = format!("{LAUNCHER_URL}/telemetry/untrack");
+    match http_post_json(&url, &body.to_string()) {
+        Ok(_) => {
+            let target = instance_path.unwrap_or_else(|| group.unwrap());
+            mcp_result(id, &format!("Stopped tracking: {target}"))
+        }
+        Err(e) => mcp_error_result(id, &format!("Failed to stop tracker: {e}")),
+    }
+}
+
+fn tool_telemetry_toggle(id: Value, arguments: &Value) -> Value {
+    let group = match arguments["group"].as_str() {
+        Some(g) => g,
+        None => return mcp_error_result(id, "'group' parameter is required"),
+    };
+    let enabled = arguments["enabled"].as_bool().unwrap_or(true);
+
+    let body = json!({ "group": group, "enabled": enabled });
+    let url = format!("{LAUNCHER_URL}/telemetry/toggle");
+    match http_post_json(&url, &body.to_string()) {
+        Ok(_) => {
+            let state = if enabled { "enabled" } else { "disabled" };
+            mcp_result(id, &format!("Group '{}' {}", group, state))
+        }
+        Err(e) => mcp_error_result(id, &format!("Failed to toggle group: {e}")),
+    }
+}
+
+fn tool_telemetry_get(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'project_path' parameter is required"),
+    };
+
+    let instance_filter = arguments["instance"].as_str().unwrap_or("");
+    let tail = arguments["tail"]
+        .as_u64()
+        .or_else(|| arguments["tail"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0) as usize;
+
+    let telemetry_file = std::path::Path::new(project_path)
+        .join(".roxlit")
+        .join("logs")
+        .join("telemetry.log");
+
+    if !telemetry_file.exists() {
+        return mcp_result(id, "No telemetry data yet. Use telemetry_track to start tracking an instance, then playtest.");
+    }
+
+    let content = match std::fs::read_to_string(&telemetry_file) {
+        Ok(c) => c,
+        Err(e) => return mcp_error_result(id, &format!("Error reading telemetry: {e}")),
+    };
+
+    // Filter by instance name if specified
+    let filtered: Vec<&str> = if instance_filter.is_empty() {
+        content.lines().collect()
+    } else {
+        content
+            .lines()
+            .filter(|line| line.contains(instance_filter))
+            .collect()
+    };
+
+    // Apply tail
+    let lines = if tail > 0 && filtered.len() > tail {
+        &filtered[filtered.len() - tail..]
+    } else {
+        &filtered[..]
+    };
+
+    let output = lines.join("\n");
+
+    if output.is_empty() {
+        return mcp_result(
+            id,
+            &format!("No telemetry data{}", if !instance_filter.is_empty() { format!(" for '{instance_filter}'") } else { String::new() }),
+        );
+    }
+
+    // Truncate if too large
+    let output = if output.len() > 15_000 {
+        format!(
+            "[...truncated, showing last ~15KB...]\n{}",
+            &output[output.len() - 15_000..]
+        )
+    } else {
+        output
+    };
+
+    mcp_result(id, &output)
+}
+
+fn tool_telemetry_clear(id: Value, arguments: &Value) -> Value {
+    let project_path = match arguments["project_path"].as_str() {
+        Some(p) => p,
+        None => return mcp_error_result(id, "'project_path' parameter is required"),
+    };
+
+    let telemetry_file = std::path::Path::new(project_path)
+        .join(".roxlit")
+        .join("logs")
+        .join("telemetry.log");
+
+    if telemetry_file.exists() {
+        let _ = std::fs::write(&telemetry_file, "");
+    }
+
+    mcp_result(id, "Telemetry data cleared.")
 }
 
 // ─── Git helpers ────────────────────────────────────────────────────────────

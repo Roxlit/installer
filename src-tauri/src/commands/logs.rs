@@ -107,6 +107,72 @@ impl McpState {
     }
 }
 
+// ─── Telemetry Tracker Registry ──────────────────────────────────────────────
+// AI registers trackers via MCP → launcher HTTP. Plugin polls for the list.
+// Trackers are path-based (resolved lazily by the plugin during Heartbeat).
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TelemetryTracker {
+    pub path: String,       // e.g. "Workspace.motorcycle_1_V2 Motorcycle.DriveSeat"
+    pub properties: String, // e.g. "CFrame,AssemblyLinearVelocity"
+    #[serde(default)]
+    pub group: String,      // e.g. "moto-body"
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool { true }
+
+pub struct TelemetryState {
+    inner: Arc<Mutex<TelemetryStateInner>>,
+}
+
+pub(crate) struct TelemetryStateInner {
+    pub(crate) trackers: Vec<TelemetryTracker>,
+    pub(crate) project_path: String,
+}
+
+impl Default for TelemetryState {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(TelemetryStateInner {
+                trackers: Vec::new(),
+                project_path: String::new(),
+            })),
+        }
+    }
+}
+
+impl TelemetryState {
+    pub fn shared(&self) -> Arc<Mutex<TelemetryStateInner>> {
+        self.inner.clone()
+    }
+}
+
+fn trackers_file(project_path: &str) -> std::path::PathBuf {
+    std::path::Path::new(project_path).join(".roxlit").join("telemetry-trackers.json")
+}
+
+async fn save_trackers(trackers: &[TelemetryTracker], project_path: &str) {
+    if project_path.is_empty() { return; }
+    let path = trackers_file(project_path);
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Ok(json) = serde_json::to_string_pretty(trackers) {
+        let _ = tokio::fs::write(&path, json).await;
+    }
+}
+
+pub(crate) async fn load_trackers(project_path: &str) -> Vec<TelemetryTracker> {
+    if project_path.is_empty() { return Vec::new(); }
+    let path = trackers_file(project_path);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
 // ─── Logger State ────────────────────────────────────────────────────────────
 
 /// Managed Tauri state holding the current session logger (if any).
@@ -161,6 +227,10 @@ impl SessionLogger {
         if output_file.exists() {
             let rotated = logs_dir.join(format!("{ts}-output.log"));
             let _ = tokio::fs::rename(&output_file, &rotated).await;
+        }
+        let telemetry_file = logs_dir.join("telemetry.log");
+        if telemetry_file.exists() {
+            let _ = tokio::fs::remove_file(&telemetry_file).await;
         }
         // Also rotate legacy latest.log if present
         let latest = logs_dir.join("latest.log");
@@ -440,6 +510,7 @@ pub async fn start_log_server(
     output_tx: mpsc::UnboundedSender<String>,
     status: Arc<Mutex<LauncherStatusInner>>,
     mcp: Arc<Mutex<McpStateInner>>,
+    telemetry: Arc<Mutex<TelemetryStateInner>>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let listener = TcpListener::bind("127.0.0.1:19556").await.ok()?;
 
@@ -454,8 +525,9 @@ pub async fn start_log_server(
             let out_tx = output_tx.clone();
             let status = status.clone();
             let mcp = mcp.clone();
+            let telemetry = telemetry.clone();
             tokio::spawn(async move {
-                handle_connection(stream, sys_tx, out_tx, status, mcp).await;
+                handle_connection(stream, sys_tx, out_tx, status, mcp, telemetry).await;
             });
         }
     });
@@ -470,6 +542,7 @@ async fn handle_connection(
     output_tx: mpsc::UnboundedSender<String>,
     status: Arc<Mutex<LauncherStatusInner>>,
     mcp: Arc<Mutex<McpStateInner>>,
+    telemetry: Arc<Mutex<TelemetryStateInner>>,
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -592,6 +665,125 @@ async fn handle_connection(
         if let Some(body_start) = request.find("\r\n\r\n") {
             let body = &request[body_start + 4..];
             process_log_batch(&output_tx, body);
+        }
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    // GET /telemetry/trackers — plugin polls for tracker definitions
+    if first_line.starts_with("GET /telemetry/trackers") {
+        let guard = telemetry.lock().await;
+        let json = serde_json::to_string(&guard.trackers).unwrap_or_else(|_| "[]".to_string());
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
+            json.len(), json,
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    // POST /telemetry/track — MCP registers a tracker
+    if first_line.starts_with("POST /telemetry/track") {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            let body = &request[body_start + 4..];
+            if let Ok(tracker) = serde_json::from_str::<TelemetryTracker>(body) {
+                let mut guard = telemetry.lock().await;
+                // Remove existing tracker with same path
+                guard.trackers.retain(|t| t.path != tracker.path);
+                let msg = format!("Telemetry: tracking {} ({})", tracker.path, tracker.properties);
+                guard.trackers.push(tracker);
+                let trackers_clone = guard.trackers.clone();
+                let pp = guard.project_path.clone();
+                drop(guard);
+                save_trackers(&trackers_clone, &pp).await;
+                send_log(&system_tx, "telemetry", &msg);
+            }
+        }
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    // POST /telemetry/untrack — MCP removes a tracker
+    if first_line.starts_with("POST /telemetry/untrack") {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            let body = &request[body_start + 4..];
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                let mut guard = telemetry.lock().await;
+                if let Some(path) = val["path"].as_str() {
+                    guard.trackers.retain(|t| t.path != path);
+                    send_log(&system_tx, "telemetry", &format!("Telemetry: stopped tracking {path}"));
+                } else if let Some(group) = val["group"].as_str() {
+                    guard.trackers.retain(|t| t.group != group);
+                    send_log(&system_tx, "telemetry", &format!("Telemetry: stopped group {group}"));
+                }
+                let trackers_clone = guard.trackers.clone();
+                let pp = guard.project_path.clone();
+                drop(guard);
+                save_trackers(&trackers_clone, &pp).await;
+            }
+        }
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    // POST /telemetry/toggle — enable/disable a group
+    if first_line.starts_with("POST /telemetry/toggle") {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            let body = &request[body_start + 4..];
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Some(group) = val["group"].as_str() {
+                    let enabled = val["enabled"].as_bool().unwrap_or(true);
+                    let mut guard = telemetry.lock().await;
+                    for t in guard.trackers.iter_mut() {
+                        if t.group == group {
+                            t.enabled = enabled;
+                        }
+                    }
+                    let state = if enabled { "enabled" } else { "disabled" };
+                    let trackers_clone = guard.trackers.clone();
+                    let pp = guard.project_path.clone();
+                    drop(guard);
+                    save_trackers(&trackers_clone, &pp).await;
+                    send_log(&system_tx, "telemetry", &format!("Telemetry: {state} group {group}"));
+                }
+            }
+        }
+        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
+        let _ = stream.write_all(response.as_bytes()).await;
+        return;
+    }
+
+    // POST /telemetry — receives telemetry data from Studio plugin
+    if first_line.starts_with("POST /telemetry") {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            let body = &request[body_start + 4..];
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Some(lines) = val["lines"].as_str() {
+                    // Write to telemetry.log in the project's .roxlit/logs/ dir
+                    let guard = status.lock().await;
+                    if !guard.project_path.is_empty() {
+                        let logs_dir = std::path::Path::new(&guard.project_path)
+                            .join(".roxlit")
+                            .join("logs");
+                        drop(guard); // Release lock before file I/O
+                        let _ = tokio::fs::create_dir_all(&logs_dir).await;
+                        let telemetry_file = logs_dir.join("telemetry.log");
+                        if let Ok(mut f) = tokio::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&telemetry_file)
+                            .await
+                        {
+                            use tokio::io::AsyncWriteExt;
+                            let _ = f.write_all(lines.as_bytes()).await;
+                            let _ = f.write_all(b"\n").await;
+                        }
+                    }
+                }
+            }
         }
         let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\nok";
         let _ = stream.write_all(response.as_bytes()).await;

@@ -162,7 +162,7 @@ pub fn roxlit_mcp_json(project_name: &str) -> String {
 /// Context version — bump this whenever ai_context() content changes significantly.
 /// ensure_ai_context() compares this against the marker in the existing file to decide
 /// whether to regenerate. Format: same as Cargo.toml version.
-pub const CONTEXT_VERSION: &str = "0.11.0";
+pub const CONTEXT_VERSION: &str = "0.12.0";
 
 /// Marker prefix used to embed the version in the generated context file.
 /// Must be a comment that AI tools will ignore but we can parse.
@@ -190,6 +190,46 @@ MCP tools connect to Roblox Studio via the Roxlit plugin. Use them ONLY for:
 - `backup_list` — List all backups with IDs, names, and timestamps.
 - `backup_restore` — Revert all files to a backup state. Automatically saves current state first (so you can undo).
 - `backup_diff` — Show what changed since a backup was created.
+- `telemetry_track` — Register an instance for real-time property tracking. Pass path, properties, and optional group. The instance does NOT need to exist — tracking activates automatically when it appears (e.g. during playtest). Names with spaces work.
+- `telemetry_stop` — Stop tracking. Pass `instance_path` for one tracker, or `group` to stop all in a group.
+- `telemetry_toggle` — Enable/disable a group without removing it (e.g. pause noisy trackers temporarily).
+- `telemetry_get` — Read telemetry data. Supports `instance` filter and `tail` parameter.
+- `telemetry_clear` — Clear the telemetry log file.
+
+### Real-Time Telemetry
+
+Use telemetry to observe how instances behave during playtests WITHOUT pausing or adding print statements.
+
+**Key feature:** Trackers are **deferred** — register them anytime, they activate when the instance exists. Perfect for instances that only appear during playtest (spawned vehicles, player characters, etc.).
+
+**When to use:**
+- Debugging physics (track CFrame, AssemblyLinearVelocity, AssemblyAngularVelocity)
+- Monitoring animations (track CFrame of joints/parts)
+- Verifying UI updates (track Position, Size, Text of GUI elements)
+- Tuning gameplay (track Health, Speed, or custom attributes)
+
+**Workflow:**
+1. `telemetry_track` — register trackers (works even before playtest)
+2. User starts playtest → trackers activate automatically
+3. `telemetry_get` to see the data
+4. `telemetry_stop` or `telemetry_toggle` when done
+
+**Example — debug a vehicle with groups:**
+```
+telemetry_track(instance_path: "Workspace.motorcycle_1_V2 Motorcycle.DriveSeat", properties: "CFrame,AssemblyLinearVelocity", group: "moto-body")
+telemetry_track(instance_path: "Workspace.motorcycle_1_V2 Motorcycle.WheelFront", properties: "CFrame,AssemblyAngularVelocity", group: "moto-wheels")
+telemetry_track(instance_path: "Workspace.motorcycle_1_V2 Motorcycle.WheelRear", properties: "CFrame,AssemblyAngularVelocity", group: "moto-wheels")
+-- User playtests and drives --
+telemetry_get(tail: 30)
+-- Too much data? Disable wheels, keep body --
+telemetry_toggle(group: "moto-wheels", enabled: false)
+-- Done debugging --
+telemetry_stop(group: "moto-body")
+telemetry_stop(group: "moto-wheels")
+```
+
+**Format:** Each line is `[T+seconds] [CLIENT/SERVER] [group] InstanceName Property: value | Property: value`
+Only significant changes are logged (position > 0.1 studs, angle > 0.5 degrees, scalar > 0.01).
 
 **Do NOT use MCP to create instances.** Write .model.json files instead — Rojo syncs them automatically.
 
@@ -431,6 +471,78 @@ The filename (minus `.model.json`) becomes the instance Name. Rojo places it und
 - To delete an instance from Studio, delete the .model.json file
 - .model.json files are versionable in git and diffable — this is a huge advantage over MCP-based creation
 
+## Creating Animations via run_code
+
+You can create animations programmatically using `run_code`. This is useful for character animations (walk, idle, attack, get-up, etc.) without needing the Animation Editor in Studio.
+
+### How it works
+
+1. **Create a KeyframeSequence** with Keyframes, each containing Poses for joints
+2. **Register it** with KeyframeSequenceProvider to get an animation asset ID
+3. **Play it** via Animator:LoadAnimation()
+
+### Example — simple wave animation
+
+```lua
+run_code([[
+local KFS = Instance.new("KeyframeSequence")
+KFS.Name = "Wave"
+KFS.Loop = false
+
+-- Keyframe at t=0: arm down (neutral)
+local kf0 = Instance.new("Keyframe")
+kf0.Time = 0
+local rootPose = Instance.new("Pose")
+rootPose.Name = "HumanoidRootPart"
+-- Right shoulder pose
+local rShoulder = Instance.new("Pose")
+rShoulder.Name = "Right Shoulder"
+rShoulder.CFrame = CFrame.Angles(0, 0, 0)
+rootPose:AddSubPose(rShoulder)
+kf0:AddPose(rootPose)
+KFS:AddKeyframe(kf0)
+
+-- Keyframe at t=0.5: arm up
+local kf1 = Instance.new("Keyframe")
+kf1.Time = 0.5
+local rootPose1 = Instance.new("Pose")
+rootPose1.Name = "HumanoidRootPart"
+local rShoulder1 = Instance.new("Pose")
+rShoulder1.Name = "Right Shoulder"
+rShoulder1.CFrame = CFrame.Angles(0, 0, math.rad(-150))
+rootPose1:AddSubPose(rShoulder1)
+kf1:AddPose(rootPose1)
+KFS:AddKeyframe(kf1)
+
+-- Register and get asset ID
+local KSP = game:GetService("KeyframeSequenceProvider")
+local assetId = KSP:RegisterKeyframeSequenceAsync(KFS)
+print("Animation registered:", assetId)
+]])
+```
+
+### Joint names (R15 rig)
+
+Use these as Pose names — they match Motor6D names in the character:
+- `Root Hip` — torso to root
+- `Left Hip`, `Right Hip` — legs
+- `Left Shoulder`, `Right Shoulder` — arms
+- `Left Knee`, `Right Knee` — lower legs
+- `Left Ankle`, `Right Ankle` — feet
+- `Left Elbow`, `Right Elbow` — forearms
+- `Left Wrist`, `Right Wrist` — hands
+- `Neck` — head
+- `Waist` — upper/lower torso
+
+### Tips
+
+- **Iterate**: Create the animation, play it, adjust CFrame angles, repeat. Ask the user if it looks right.
+- **Small angle changes**: When refining, change angles by at least 5-10 degrees per iteration — smaller changes are invisible.
+- **Log what you changed**: Always tell the user what angles you modified and why.
+- **CFrame.Angles uses radians**: Use `math.rad(degrees)` for readability.
+- **Easing**: Set `kf.EasingStyle` and `kf.EasingDirection` on Keyframes for smooth transitions.
+- **Priority**: Set `AnimationTrack.Priority` to `Enum.AnimationPriority.Action` for one-shot animations that override idle/walk.
+
 "#;
 
     format!(
@@ -480,7 +592,11 @@ src/                                ← All game code and instances (synced by R
 - Require modules relatively: `require(script.Parent.ModuleName)`
 - Prefer `task.wait()` over `wait()`, `task.spawn()` over `spawn()`
 - Add `--!strict` at the top of every file
-- In `string.gsub()` replacements, `%` is a special character. Escape it as `%%` or use a function replacement: `gsub(pattern, function() return str end)`
+- **CRITICAL `string.gsub` rule:** The replacement string treats `%` as special. Code like `gsub(pat, newStr)` where `newStr` contains `%` (e.g. `string.format("%.1f", x)`) will ERROR with "invalid use of '%'". **ALWAYS use the function form for literal replacement:**
+  ```lua
+  src:gsub(pattern, function() return newString end)
+  ```
+  This applies to ANY gsub where the replacement might contain `%`, `string.format`, format specifiers, or Lua patterns. Never use the string form unless you are 100% certain the replacement has no `%`.
 
 ## Instance Organization
 
