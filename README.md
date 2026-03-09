@@ -103,5 +103,6 @@ src-tauri/                    # Rust backend
 ## Links
 
 - **Website**: [roxlit.dev](https://roxlit.dev)
+- **Discord**: [discord.gg/xZgmXzFecP](https://discord.gg/xZgmXzFecP)
 - **Feedback**: [GitHub Discussions](https://github.com/Roxlit/installer/discussions)
 - **Blog**: [roxlit.dev/blog](https://roxlit.dev/blog)
