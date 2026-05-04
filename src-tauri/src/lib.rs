@@ -100,6 +100,7 @@ pub fn run() {
             commands::detect::detect_environment,
             commands::install::run_installation,
             commands::install::check_studio_mcp_status,
+            commands::install::setup_studio_mcp,
             commands::config::load_config,
             commands::config::save_project,
             commands::config::save_update_state,

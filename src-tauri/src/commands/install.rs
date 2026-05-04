@@ -693,6 +693,44 @@ async fn install_studio_plugin(config: &InstallConfig) -> Result<()> {
     Ok(())
 }
 
+/// Configures the native Studio MCP for the given AI tool from the launcher.
+/// Returns Ok(true) on success, Ok(false) if mcp.bat not found, Err on failure.
+#[tauri::command]
+pub async fn setup_studio_mcp(ai_tool: String, project_path: String) -> Result<bool> {
+    let mcp_bat_exists = {
+        #[cfg(target_os = "windows")]
+        {
+            dirs::data_local_dir()
+                .map(|d| d.join("Roblox").join("mcp.bat").exists())
+                .unwrap_or(false)
+        }
+        #[cfg(not(target_os = "windows"))]
+        { false }
+    };
+
+    if !mcp_bat_exists {
+        return Ok(false);
+    }
+
+    match ai_tool.as_str() {
+        "claude" => configure_mcp_claude_code().await.map(|_| true),
+        tool => {
+            let path = match tool {
+                "cursor" => dirs::home_dir().map(|h| h.join(".cursor").join("mcp.json")),
+                "vscode" => Some(PathBuf::from(&project_path).join(".vscode").join("mcp.json")),
+                "windsurf" => dirs::home_dir()
+                    .map(|h| h.join(".codeium").join("windsurf").join("mcp_config.json")),
+                _ => None,
+            };
+            if let Some(p) = path {
+                configure_mcp_json_file(&p).map(|_| true)
+            } else {
+                Ok(true)
+            }
+        }
+    }
+}
+
 /// Returns the Studio MCP availability status for the launcher banner.
 /// - "ready": mcp.bat found, user only needs to activate the toggle in Studio
 /// - "needs_update": Roblox folder found but no mcp.bat (older Studio version)
@@ -771,6 +809,7 @@ async fn configure_mcp_claude_code() -> Result<()> {
     cmd.args([
         "mcp", "add",
         "--transport", "stdio",
+        "--global",
         "Roblox_Studio",
         "--",
         "cmd.exe", "/c", "%LOCALAPPDATA%\\Roblox\\mcp.bat",

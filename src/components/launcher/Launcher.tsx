@@ -318,6 +318,8 @@ export function Launcher({
           <SettingsPopover
             updateDelayDays={updateDelayDays}
             onUpdateDelayChange={onUpdateDelayChange}
+            aiTool={aiTool}
+            projectPath={projectPath}
           />
         </div>
         {appVersion && (
