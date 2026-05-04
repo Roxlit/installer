@@ -696,7 +696,7 @@ async fn install_studio_plugin(config: &InstallConfig) -> Result<()> {
 /// Configures the native Studio MCP for the given AI tool from the launcher.
 /// Returns Ok(true) on success, Ok(false) if mcp.bat not found, Err on failure.
 #[tauri::command]
-pub async fn setup_studio_mcp(ai_tool: String, project_path: String) -> Result<bool> {
+pub fn setup_studio_mcp(ai_tool: String, project_path: String) -> Result<bool> {
     let mcp_bat_exists = {
         #[cfg(target_os = "windows")]
         {
@@ -713,7 +713,7 @@ pub async fn setup_studio_mcp(ai_tool: String, project_path: String) -> Result<b
     }
 
     match ai_tool.as_str() {
-        "claude" => configure_mcp_claude_code().await.map(|_| true),
+        "claude" => configure_mcp_claude_code().map(|_| true),
         tool => {
             let path = match tool {
                 "cursor" => dirs::home_dir().map(|h| h.join(".cursor").join("mcp.json")),
@@ -763,7 +763,7 @@ pub async fn check_studio_mcp_status() -> String {
 /// Non-critical: always returns Ok(()), emitting a warning on failure.
 async fn configure_studio_mcp(config: &InstallConfig, on_event: &Channel<SetupEvent>) -> Result<()> {
     let result: Result<()> = match config.ai_tool.as_str() {
-        "claude" => configure_mcp_claude_code().await,
+        "claude" => configure_mcp_claude_code(),
         tool => {
             let path = match tool {
                 "cursor" => dirs::home_dir().map(|h| h.join(".cursor").join("mcp.json")),
@@ -804,35 +804,12 @@ async fn configure_studio_mcp(config: &InstallConfig, on_event: &Channel<SetupEv
     Ok(())
 }
 
-async fn configure_mcp_claude_code() -> Result<()> {
-    let mut cmd = tokio::process::Command::new("claude");
-    cmd.args([
-        "mcp", "add",
-        "--transport", "stdio",
-        "--global",
-        "Roblox_Studio",
-        "--",
-        "cmd.exe", "/c", "%LOCALAPPDATA%\\Roblox\\mcp.bat",
-    ]);
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| InstallerError::Custom(format!("Could not run claude CLI: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
-        // "already exists" means it was already configured — that's fine
-        if !stderr.contains("already") && !stderr.contains("exists") {
-            return Err(InstallerError::Custom(format!(
-                "claude mcp add failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-    }
-    Ok(())
+fn configure_mcp_claude_code() -> Result<()> {
+    // Write directly to ~/.claude.json — avoids depending on `claude` CLI being in PATH
+    let config_path = dirs::home_dir()
+        .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?
+        .join(".claude.json");
+    configure_mcp_json_file(&config_path)
 }
 
 fn configure_mcp_json_file(config_path: &std::path::Path) -> Result<()> {

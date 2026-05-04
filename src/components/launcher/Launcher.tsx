@@ -127,6 +127,11 @@ export function Launcher({
     getVersion().then(setAppVersion).catch(() => {});
   }, []);
 
+  // Silently configure Studio MCP on every launch — idempotent, no user action needed
+  useEffect(() => {
+    invoke("setup_studio_mcp", { aiTool: aiTool, projectPath: projectPath }).catch(() => {});
+  }, [aiTool, projectPath]);
+
   // Close project dropdown on outside click
   useEffect(() => {
     if (!projectDropdownOpen) return;
@@ -318,8 +323,6 @@ export function Launcher({
           <SettingsPopover
             updateDelayDays={updateDelayDays}
             onUpdateDelayChange={onUpdateDelayChange}
-            aiTool={aiTool}
-            projectPath={projectPath}
           />
         </div>
         {appVersion && (
