@@ -99,6 +99,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::detect::detect_environment,
             commands::install::run_installation,
+            commands::install::check_studio_mcp_status,
             commands::config::load_config,
             commands::config::save_project,
             commands::config::save_update_state,

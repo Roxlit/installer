@@ -1,8 +1,11 @@
-import { useState } from "react";
-import { X, Zap } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, Zap, Download, RefreshCw } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import mcpTutorial from "@/assets/mcp_tutorial.webp";
 
 const DISMISSED_KEY = "mcp_banner_dismissed";
+
+type StudioMcpStatus = "ready" | "needs_update" | "not_installed" | "loading";
 
 export function useMcpBanner() {
   const [dismissed, setDismissed] = useState(
@@ -23,6 +26,55 @@ interface McpBannerProps {
 
 export function McpBanner({ onDismiss }: McpBannerProps) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [status, setStatus] = useState<StudioMcpStatus>("loading");
+
+  useEffect(() => {
+    invoke<string>("check_studio_mcp_status")
+      .then((s) => setStatus(s as StudioMcpStatus))
+      .catch(() => setStatus("ready")); // optimistic fallback
+  }, []);
+
+  if (status === "loading") return null;
+
+  if (status === "not_installed") {
+    return (
+      <div className="flex items-center justify-between rounded-md border border-zinc-700/40 bg-zinc-800/40 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <Download className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+          <span className="text-xs text-zinc-400">
+            Install Roblox Studio to enable the Studio MCP connection.
+          </span>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="ml-3 rounded p-1 text-zinc-500 transition-colors hover:bg-white/5 hover:text-zinc-300"
+          title="Dismiss"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+    );
+  }
+
+  if (status === "needs_update") {
+    return (
+      <div className="flex items-center justify-between rounded-md border border-yellow-500/20 bg-yellow-500/[0.05] px-3 py-2">
+        <div className="flex items-center gap-2">
+          <RefreshCw className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
+          <span className="text-xs text-yellow-400">
+            Update Roblox Studio to get native MCP support.
+          </span>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="ml-3 rounded p-1 text-zinc-500 transition-colors hover:bg-white/5 hover:text-zinc-300"
+          title="Dismiss"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <>

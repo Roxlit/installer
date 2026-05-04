@@ -693,30 +693,37 @@ async fn install_studio_plugin(config: &InstallConfig) -> Result<()> {
     Ok(())
 }
 
+/// Returns the Studio MCP availability status for the launcher banner.
+/// - "ready": mcp.bat found, user only needs to activate the toggle in Studio
+/// - "needs_update": Roblox folder found but no mcp.bat (older Studio version)
+/// - "not_installed": no Roblox installation detected
+#[tauri::command]
+pub async fn check_studio_mcp_status() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(local) = dirs::data_local_dir() {
+            let roblox_dir = local.join("Roblox");
+            if !roblox_dir.exists() {
+                return "not_installed".into();
+            }
+            if roblox_dir.join("mcp.bat").exists() {
+                return "ready".into();
+            }
+            return "needs_update".into();
+        }
+        "not_installed".into()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "not_installed".into()
+    }
+}
+
 /// Configures the native Roblox Studio MCP for the user's AI tool.
+/// Always runs regardless of whether mcp.bat exists — the AI tool config
+/// is independent of Studio's installation state.
 /// Non-critical: always returns Ok(()), emitting a warning on failure.
 async fn configure_studio_mcp(config: &InstallConfig, on_event: &Channel<SetupEvent>) -> Result<()> {
-    let mcp_bat_exists = {
-        #[cfg(target_os = "windows")]
-        {
-            dirs::data_local_dir()
-                .map(|d| d.join("Roblox").join("mcp.bat").exists())
-                .unwrap_or(false)
-        }
-        #[cfg(not(target_os = "windows"))]
-        { false }
-    };
-
-    if !mcp_bat_exists {
-        on_event
-            .send(SetupEvent::StepCompleted {
-                step: "studio_mcp".into(),
-                detail: "Studio MCP will be available once activated in Studio".into(),
-            })
-            .map_err(|e| InstallerError::Custom(e.to_string()))?;
-        return Ok(());
-    }
-
     let result: Result<()> = match config.ai_tool.as_str() {
         "claude" => configure_mcp_claude_code().await,
         tool => {
