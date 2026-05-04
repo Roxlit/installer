@@ -63,6 +63,7 @@ fn write_context_packs(project_root: &Path) -> Result<()> {
     fs::write(context_dir.join("replication.md"), templates::context_packs::replication())?;
     fs::write(context_dir.join("services-reference.md"), templates::context_packs::services_reference())?;
     fs::write(context_dir.join("studio-ui.md"), templates::context_packs::studio_ui())?;
+    fs::write(context_dir.join("mcp-tools.md"), templates::context_packs::mcp_tools())?;
 
     // Version file for mid-session context refresh detection
     fs::write(context_dir.join("version.txt"), "1")?;

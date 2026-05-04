@@ -22,6 +22,7 @@ These files contain curated Roblox/Luau documentation to help you write correct 
 | `replication.md` | What replicates, FilteringEnabled rules, RunContext |
 | `services-reference.md` | Service properties, enums, valid ranges |
 | `studio-ui.md` | Studio UI: panel locations, testing modes, localized names, troubleshooting |
+| `mcp-tools.md` | MCP tools reference: when to use run_code vs execute_luau, get_logs vs console_output, backup workflow, telemetry, and which tools are dangerous |
 
 ## How to Use
 
@@ -1072,6 +1073,128 @@ local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
 
 /// Roblox Studio UI: layout, toolbar contents, panel locations, testing, troubleshooting.
 /// Source: verified from actual Studio screenshots (Feb 2026), new Flexible UI.
+pub fn mcp_tools() -> &'static str {
+    r#"# MCP Tools Reference
+
+> Roxlit uses two MCP servers simultaneously. Knowing which to use and when prevents token waste and bugs.
+
+## The Two MCP Servers
+
+### roxlit (Roxlit MCP)
+Connected via the Roxlit plugin in Studio. Runs through the Roxlit launcher HTTP server.
+Tools: `run_code`, `get_logs`, `list_sessions`, `backup_create`, `backup_list`, `backup_restore`, `backup_diff`, `telemetry_track`, `telemetry_stop`, `telemetry_toggle`, `telemetry_get`, `telemetry_clear`
+
+### Roblox_Studio (Native Roblox Studio MCP)
+Connected directly to Studio via Studio's built-in MCP server. Must be activated in Studio's Assistant panel.
+Tools: `execute_luau`, `console_output`, `script_read`, `multi_edit`, `script_search`, `script_grep`, `search_game_tree`, `inspect_instance`, `generate_mesh`, `generate_material`, `generate_procedural_model`, `insert_from_creator_store`, `start_stop_play`, `screen_capture`, `character_navigation`, `keyboard_input`, `mouse_input`, `list_roblox_studios`, `set_active_studio`, `explore_subagent`, `playtest_subagent`
+
+---
+
+## Tool-by-Tool Guide
+
+### run_code (roxlit) — PREFERRED for code execution
+Executes Luau in Studio via PluginSecurity. **Limit: ~5000 characters.**
+
+**Why prefer this over execute_luau:** The character limit is intentional. It forces incremental changes — run a small piece, verify the output, continue. This prevents the most common AI mistake: writing 200 lines of code in one shot, having it fail for a subtle reason, and spending 15k tokens debugging an inconsistent state.
+
+```
+ALWAYS: break complex operations into small run_code calls, verify each one
+NEVER: try to fit an entire feature into a single run_code call
+```
+
+### execute_luau (Roblox_Studio) — use only when run_code is unavailable
+Same as run_code but no character limit. The lack of a limit is a footgun — it encourages large, unverified operations. Only use if run_code is not connected.
+
+### get_logs (roxlit) — PREFERRED for reading logs
+Reads Studio output logs with filtering:
+- `source`: `"output"` (game prints/warns/errors) or `"system"` (Roxlit infrastructure)
+- `playtest`: `"latest"` (default), `"all"`, or a number like `"3"` for a specific playtest
+- `tail`: last N lines only
+- `session`: read logs from a previous session by ID
+
+```
+USE: get_logs with playtest: "latest" after every run_code to verify output
+USE: get_logs with source: "system" when Rojo or MCP connection seems broken
+```
+
+### console_output (Roblox_Studio) — use only when get_logs is unavailable
+Returns current session logs only. No playtest filtering, no session history, no source switching. Use as fallback when roxlit is not connected.
+
+### script_read (Roblox_Studio)
+Reads a script by dot-notation path (e.g. `ServerScriptService.GameManager`). Supports line ranges. Use before editing to understand the current state.
+
+### multi_edit (Roblox_Studio) — CAUTION
+Applies edits to multiple scripts in a single operation. **Dangerous with AI**: if something fails mid-operation, multiple files end up in inconsistent state simultaneously. You lose the ability to know exactly where the failure occurred.
+
+```
+PREFER: edit one script at a time, verify with run_code, then move to the next
+ONLY USE multi_edit: for purely mechanical bulk renames where each change is trivial and identical
+```
+
+### script_search / script_grep (Roblox_Studio)
+- `script_search`: fuzzy search by script name (max 10 results)
+- `script_grep`: text search inside all scripts (max 50 matches)
+
+Use these to locate code before reading or editing. Always read first with `script_read`.
+
+### search_game_tree (Roblox_Studio)
+Returns the instance hierarchy as JSON. Use to understand the structure of the place before creating or modifying instances.
+
+### inspect_instance (Roblox_Studio)
+Returns properties, attributes, and children of a specific instance. Use before modifying an instance's properties to verify its current state.
+
+### generate_mesh / generate_material / generate_procedural_model (Roblox_Studio) — CAUTION
+AI-powered asset generation. These operations are not easily reversible.
+
+```
+ALWAYS: run backup_create (roxlit) before using any generate_* tool
+NEVER: use generate_* tools without explicit user confirmation first
+```
+
+### backup_create / backup_list / backup_restore / backup_diff (roxlit)
+Project backup system managed by Roxlit.
+
+```
+USE backup_create: before any large refactor, before generate_* tools, before restoring anything
+USE backup_diff: to show the user what changed before committing to a restore
+USE backup_restore: only after showing the user backup_diff and getting confirmation
+```
+
+### telemetry_track / telemetry_get / telemetry_stop / telemetry_toggle / telemetry_clear (roxlit)
+Tracks named values in real time during playtests (e.g. player health, coin count, enemy count).
+
+```
+USE: to monitor values that change during gameplay without spamming print()
+USE telemetry_toggle: to enable/disable groups of trackers without removing them
+```
+
+### start_stop_play (Roblox_Studio)
+Starts or stops a playtest session programmatically.
+
+### screen_capture (Roblox_Studio)
+Captures a screenshot of the Studio viewport during play mode. Use to verify visual changes.
+
+### character_navigation / keyboard_input / mouse_input (Roblox_Studio)
+Simulates player input during playtests. Part of the automated testing agent features.
+
+---
+
+## Decision Guide
+
+| I want to... | Use |
+|---|---|
+| Run a quick Luau snippet | `run_code` |
+| Read recent game output | `get_logs` (playtest: "latest") |
+| Find where something is in the game tree | `search_game_tree` |
+| Read a script before editing | `script_read` |
+| Edit a script | Edit via Rojo file sync (preferred) or `multi_edit` (single script only) |
+| Track a value during gameplay | `telemetry_track` |
+| Save state before a risky change | `backup_create` |
+| Generate a 3D asset | `backup_create` first, then `generate_mesh` |
+| Debug a broken connection | `get_logs` (source: "system") |
+"#
+}
+
 pub fn studio_ui() -> &'static str {
     r#"# Roblox Studio UI
 
