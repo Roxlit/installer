@@ -16,6 +16,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { LogTerminal } from "./LogTerminal";
 import { UpdateBanner } from "./UpdateBanner";
+import { McpBanner, useMcpBanner } from "./McpBanner";
 import { SettingsPopover } from "./SettingsPopover";
 import { TOOL_OPTIONS } from "@/lib/types";
 import type { ProjectEntry, RojoStatus, UpdateInfo } from "@/lib/types";
@@ -118,6 +119,7 @@ export function Launcher({
   const [editorLoading, setEditorLoading] = useState(false);
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const mcpBanner = useMcpBanner();
   const projectDropdownRef = useRef<HTMLDivElement>(null);
   const hasMultipleProjects = allProjects.length > 1;
 
@@ -247,6 +249,13 @@ export function Launcher({
       {update && (
         <div className="mt-3">
           <UpdateBanner update={update} onDismiss={onDismissUpdate} />
+        </div>
+      )}
+
+      {/* MCP setup banner */}
+      {mcpBanner.show && (
+        <div className="mt-3">
+          <McpBanner onDismiss={mcpBanner.dismiss} />
         </div>
       )}
 

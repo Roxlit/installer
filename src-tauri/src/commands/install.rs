@@ -234,6 +234,19 @@ pub async fn run_installation(
         })
         .map_err(|e| InstallerError::Custom(e.to_string()))?;
 
+    // Step 7: Configure native Roblox Studio MCP
+    step_index += 1;
+    on_event
+        .send(SetupEvent::StepStarted {
+            step: "studio_mcp".into(),
+            description: "Configuring Roblox Studio MCP connection".into(),
+            step_index,
+            total_steps,
+        })
+        .map_err(|e| InstallerError::Custom(e.to_string()))?;
+
+    configure_studio_mcp(&config, &on_event).await?;
+
     // All done
     on_event
         .send(SetupEvent::Finished)
@@ -243,7 +256,7 @@ pub async fn run_installation(
 }
 
 fn calculate_total_steps(config: &InstallConfig) -> usize {
-    let mut steps = 3; // plugin + project + context are always run
+    let mut steps = 4; // plugin + project + context + studio_mcp are always run
     if !config.skip_aftman {
         steps += 1;
     }
@@ -676,6 +689,136 @@ async fn install_studio_plugin(config: &InstallConfig) -> Result<()> {
 
     let plugin_file = plugins_path.join("Rojo.rbxm");
     std::fs::write(&plugin_file, &bytes)?;
+
+    Ok(())
+}
+
+/// Configures the native Roblox Studio MCP for the user's AI tool.
+/// Non-critical: always returns Ok(()), emitting a warning on failure.
+async fn configure_studio_mcp(config: &InstallConfig, on_event: &Channel<SetupEvent>) -> Result<()> {
+    let mcp_bat_exists = {
+        #[cfg(target_os = "windows")]
+        {
+            dirs::data_local_dir()
+                .map(|d| d.join("Roblox").join("mcp.bat").exists())
+                .unwrap_or(false)
+        }
+        #[cfg(not(target_os = "windows"))]
+        { false }
+    };
+
+    if !mcp_bat_exists {
+        on_event
+            .send(SetupEvent::StepCompleted {
+                step: "studio_mcp".into(),
+                detail: "Studio MCP will be available once activated in Studio".into(),
+            })
+            .map_err(|e| InstallerError::Custom(e.to_string()))?;
+        return Ok(());
+    }
+
+    let result: Result<()> = match config.ai_tool.as_str() {
+        "claude" => configure_mcp_claude_code().await,
+        tool => {
+            let path = match tool {
+                "cursor" => dirs::home_dir().map(|h| h.join(".cursor").join("mcp.json")),
+                "vscode" => Some(PathBuf::from(&config.project_path).join(".vscode").join("mcp.json")),
+                "windsurf" => dirs::home_dir()
+                    .map(|h| h.join(".codeium").join("windsurf").join("mcp_config.json")),
+                _ => None,
+            };
+            if let Some(p) = path {
+                configure_mcp_json_file(&p)
+            } else {
+                Ok(())
+            }
+        }
+    };
+
+    match result {
+        Ok(()) => {
+            on_event
+                .send(SetupEvent::StepCompleted {
+                    step: "studio_mcp".into(),
+                    detail: "Studio MCP configured — activate it in Studio to connect".into(),
+                })
+                .map_err(|e| InstallerError::Custom(e.to_string()))?;
+        }
+        Err(e) => {
+            on_event
+                .send(SetupEvent::StepWarning {
+                    step: "studio_mcp".into(),
+                    message: format!(
+                        "Could not configure Studio MCP automatically: {e}. You can set it up manually in Studio's Assistant settings."
+                    ),
+                })
+                .map_err(|e| InstallerError::Custom(e.to_string()))?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn configure_mcp_claude_code() -> Result<()> {
+    let mut cmd = tokio::process::Command::new("claude");
+    cmd.args([
+        "mcp", "add",
+        "--transport", "stdio",
+        "Roblox_Studio",
+        "--",
+        "cmd.exe", "/c", "%LOCALAPPDATA%\\Roblox\\mcp.bat",
+    ]);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| InstallerError::Custom(format!("Could not run claude CLI: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+        // "already exists" means it was already configured — that's fine
+        if !stderr.contains("already") && !stderr.contains("exists") {
+            return Err(InstallerError::Custom(format!(
+                "claude mcp add failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn configure_mcp_json_file(config_path: &std::path::Path) -> Result<()> {
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut root: serde_json::Value = if config_path.exists() {
+        std::fs::read_to_string(config_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+
+    if root.get("mcpServers").is_none() {
+        root["mcpServers"] = serde_json::json!({});
+    }
+
+    root["mcpServers"]["Roblox_Studio"] = serde_json::json!({
+        "command": "cmd.exe",
+        "args": ["/c", "%LOCALAPPDATA%\\Roblox\\mcp.bat"]
+    });
+
+    let content = serde_json::to_string_pretty(&root)
+        .map_err(|e| InstallerError::Custom(e.to_string()))?;
+    std::fs::write(config_path, content)?;
 
     Ok(())
 }
