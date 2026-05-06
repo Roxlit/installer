@@ -13,80 +13,145 @@ async fn open_in_editor(editor: String, path: String) -> Result<(), String> {
     let path = util::expand_tilde(&path);
 
     if editor == "claude" {
-        // Claude Code is a CLI tool — open a terminal at the project directory
         #[cfg(target_os = "windows")]
         {
-            // Try Windows Terminal first, fall back to cmd.exe
             let result = tokio::process::Command::new("wt.exe")
                 .args(["-d", &path, "cmd", "/k", "claude"])
+                .creation_flags(0x08000000)
                 .spawn();
             if result.is_ok() {
                 return Ok(());
             }
-            // Fallback: cmd.exe
-            let result = tokio::process::Command::new("cmd.exe")
+            tokio::process::Command::new("cmd.exe")
                 .args(["/c", "start", "cmd.exe", "/k", &format!("cd /d \"{}\" && claude", path)])
-                .spawn();
-            match result {
-                Ok(_) => return Ok(()),
-                Err(e) => return Err(format!("Failed to open terminal: {e}")),
-            }
+                .creation_flags(0x08000000)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("Failed to open terminal: {e}"))?;
+            return Ok(());
         }
         #[cfg(not(target_os = "windows"))]
         {
-            // On macOS/Linux, just run claude in the project directory
-            let result = tokio::process::Command::new("claude")
+            return tokio::process::Command::new("claude")
                 .current_dir(&path)
-                .spawn();
-            match result {
-                Ok(_) => return Ok(()),
-                Err(e) => return Err(format!("Failed to open claude: {e}")),
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("Failed to open claude: {e}"));
+        }
+    }
+
+    // Find the editor executable, then open the project folder
+    let exe = find_editor_exe(&editor)
+        .ok_or_else(|| format!("Could not find '{editor}'. Make sure it is installed."))?;
+
+    #[allow(unused_mut)]
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.arg(&path);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to launch {}: {e}", exe.display()))
+}
+
+/// Finds the executable for a GUI editor.
+/// Strategy: registry (Windows) → common install paths → PATH.
+fn find_editor_exe(editor: &str) -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        // 1. Try Windows registry first — covers any install location
+        if let Some(p) = find_editor_in_registry(editor) {
+            return Some(p);
+        }
+
+        // 2. Common per-user and system install paths
+        let local = dirs::data_local_dir()?;
+        let program_files = std::env::var("ProgramFiles").unwrap_or_default();
+        let program_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
+
+        let subfolder = match editor {
+            "vscode"    => "Microsoft VS Code",
+            "cursor"    => "cursor",
+            "windsurf"  => "Windsurf",
+            _           => "Microsoft VS Code",
+        };
+        let bin = match editor {
+            "vscode" => "bin/code.cmd",
+            _        => &format!("{}.exe", editor),
+        };
+
+        let roots = [
+            local.to_string_lossy().to_string(),
+            format!("{local}/Programs", local = local.display()),
+            program_files.clone(),
+            program_files_x86.clone(),
+        ];
+
+        for root in &roots {
+            let candidate = std::path::Path::new(root).join(subfolder).join(bin);
+            if candidate.exists() {
+                return Some(candidate);
             }
         }
     }
 
-    // GUI editors: pass path as argument to open the folder
-    let candidates: &[&str] = match editor.as_str() {
-        "cursor" => &["cursor"],
-        "windsurf" => &["windsurf"],
-        "vscode" => &[
-            // CLI alias (only works if user ran "Install 'code' command in PATH")
-            "code",
-            // Default install paths on Windows
-            r"C:\Users\Default\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd",
-        ],
-        _ => &["code"],
+    // 3. Fall back to PATH (works on macOS/Linux and Windows if the CLI is installed)
+    let cli = match editor {
+        "vscode"   => "code",
+        "cursor"   => "cursor",
+        "windsurf" => "windsurf",
+        _          => "code",
+    };
+    // `which` just checks if the name resolves — use it as a sanity check
+    which_exe(cli)
+}
+
+/// Looks up an editor executable path from the Windows registry.
+/// VS Code, Cursor, and Windsurf all register under App Paths when installed.
+#[cfg(target_os = "windows")]
+fn find_editor_in_registry(editor: &str) -> Option<std::path::PathBuf> {
+    use winreg::enums::{HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER, KEY_READ};
+    use winreg::RegKey;
+
+    let exe_name = match editor {
+        "vscode"   => "Code.exe",
+        "cursor"   => "cursor.exe",
+        "windsurf" => "windsurf.exe",
+        _          => return None,
     };
 
-    // On Windows, also check the per-user AppData path for VS Code
-    #[cfg(target_os = "windows")]
-    if editor == "vscode" {
-        if let Some(local) = dirs::data_local_dir() {
-            let exe = local.join("Programs").join("Microsoft VS Code").join("bin").join("code.cmd");
-            if exe.exists() {
-                let result = tokio::process::Command::new(&exe)
-                    .arg(&path)
-                    .creation_flags(0x08000000)
-                    .spawn();
-                if result.is_ok() {
-                    return Ok(());
+    let reg_path = format!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{exe_name}");
+
+    // Check HKCU first (per-user install), then HKLM (system install)
+    for hive in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        if let Ok(key) = RegKey::predef(hive).open_subkey_with_flags(&reg_path, KEY_READ) {
+            if let Ok(path) = key.get_value::<String, _>("") {
+                let p = std::path::PathBuf::from(&path);
+                if p.exists() {
+                    return Some(p);
                 }
             }
         }
     }
+    None
+}
 
-    for cmd in candidates {
-        #[allow(unused_mut)]
-        let mut command = tokio::process::Command::new(cmd);
-        command.arg(&path);
-        #[cfg(target_os = "windows")]
-        command.creation_flags(0x08000000);
-        if command.spawn().is_ok() {
-            return Ok(());
+/// Returns the full path of an executable if it exists in PATH, else None.
+fn which_exe(name: &str) -> Option<std::path::PathBuf> {
+    // Try spawning with --version to check existence without side effects
+    let cmd = if cfg!(target_os = "windows") {
+        std::process::Command::new("where").arg(name).output().ok()
+    } else {
+        std::process::Command::new("which").arg(name).output().ok()
+    };
+    cmd.and_then(|o| {
+        if o.status.success() {
+            let s = String::from_utf8_lossy(&o.stdout).trim().lines().next()?.to_string();
+            Some(std::path::PathBuf::from(s))
+        } else {
+            None
         }
-    }
-
-    Err(format!("Could not open editor for '{editor}'. Make sure it is installed."))
+    })
 }
 
 /// Fallback URL opener for WSL development where xdg-open doesn't work.
