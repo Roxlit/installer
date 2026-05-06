@@ -46,20 +46,47 @@ async fn open_in_editor(editor: String, path: String) -> Result<(), String> {
     }
 
     // GUI editors: pass path as argument to open the folder
-    let cmd = match editor.as_str() {
-        "cursor" => "cursor",
-        "vscode" | "windsurf" => "code",
-        _ => "code",
+    let candidates: &[&str] = match editor.as_str() {
+        "cursor" => &["cursor"],
+        "windsurf" => &["windsurf"],
+        "vscode" => &[
+            // CLI alias (only works if user ran "Install 'code' command in PATH")
+            "code",
+            // Default install paths on Windows
+            r"C:\Users\Default\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd",
+        ],
+        _ => &["code"],
     };
 
-    let result = tokio::process::Command::new(cmd)
-        .arg(&path)
-        .spawn();
-
-    match result {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("Failed to open {cmd}: {e}")),
+    // On Windows, also check the per-user AppData path for VS Code
+    #[cfg(target_os = "windows")]
+    if editor == "vscode" {
+        if let Some(local) = dirs::data_local_dir() {
+            let exe = local.join("Programs").join("Microsoft VS Code").join("bin").join("code.cmd");
+            if exe.exists() {
+                let result = tokio::process::Command::new(&exe)
+                    .arg(&path)
+                    .creation_flags(0x08000000)
+                    .spawn();
+                if result.is_ok() {
+                    return Ok(());
+                }
+            }
+        }
     }
+
+    for cmd in candidates {
+        #[allow(unused_mut)]
+        let mut command = tokio::process::Command::new(cmd);
+        command.arg(&path);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x08000000);
+        if command.spawn().is_ok() {
+            return Ok(());
+        }
+    }
+
+    Err(format!("Could not open editor for '{editor}'. Make sure it is installed."))
 }
 
 /// Fallback URL opener for WSL development where xdg-open doesn't work.
