@@ -1,0 +1,40 @@
+version: 2
+updates:
+  # Frontend dependencies (React + TypeScript). npm prod and dev are grouped
+  # separately so production changes get their own reviewable PR.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    groups:
+      npm-production:
+        dependency-type: production
+      npm-development:
+        dependency-type: development
+
+  # Rust dependencies (Tauri backend). Group patch+minor (safe to batch);
+  # majors land as individual PRs so each breaking bump is reviewed alone.
+  - package-ecosystem: cargo
+    directory: "/src-tauri"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    groups:
+      cargo-safe:
+        update-types:
+          - minor
+          - patch
+
+  # Keep workflow actions (checkout, setup-node, tauri-action, etc.) current.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
