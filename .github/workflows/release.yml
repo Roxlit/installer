@@ -176,3 +176,39 @@ jobs:
           git commit -m "chore: bump version to $env:VERSION"
           git push origin dev
         shell: pwsh
+
+  build-plugin:
+    name: Build Studio plugin (Roxlit.rbxm)
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # The unified plugin lives in the Roxlit/rojo fork, not in this repo.
+      # Pin to a specific fork ref so a release reproduces a known-good plugin
+      # build. Bump this ref when the plugin changes in Roxlit/rojo.
+      - name: Checkout Roxlit Rojo fork (plugin source)
+        uses: actions/checkout@v4
+        with:
+          repository: Roxlit/rojo
+          ref: 3695d1cf8965245af13d64d78bad716f7b594822
+          path: roxlit-rojo
+          submodules: true
+
+      - name: Setup Aftman
+        uses: ok-nick/setup-aftman@v0.1.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          trust-check: false
+          version: v0.3.0
+          path: roxlit-rojo
+
+      - name: Build plugin
+        working-directory: roxlit-rojo
+        run: rojo build plugin --output "$GITHUB_WORKSPACE/Roxlit.rbxm"
+
+      - name: Upload plugin to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: gh release upload "v$VERSION" Roxlit.rbxm --clobber
