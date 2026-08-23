@@ -14,7 +14,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
 
@@ -188,7 +188,7 @@ jobs:
       # Pin to a specific fork ref so a release reproduces a known-good plugin
       # build. Bump this ref when the plugin changes in Roxlit/rojo.
       - name: Checkout Roxlit Rojo fork (plugin source)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Roxlit/rojo
           ref: 3695d1cf8965245af13d64d78bad716f7b594822
