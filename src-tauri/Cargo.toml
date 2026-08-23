@@ -23,7 +23,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "blocking"] }
 thiserror = "2"
-zip = "2"
+zip = "8"
 dirs = "6"
 futures-util = "0.3"
 anyhow = "1"
