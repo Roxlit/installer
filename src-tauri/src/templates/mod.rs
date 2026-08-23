@@ -172,6 +172,61 @@ const VERSION_MARKER: &str = "<!-- roxlit-context-version:";
 /// Everything from this marker to the end of the file is preserved on regeneration.
 pub const USER_NOTES_MARKER: &str = "## Your Notes";
 
+/// Flags appended to the version marker to record HOW the file was generated.
+///
+/// The point is that regeneration decisions read state from the marker instead
+/// of grepping the body for prose. A grep asks "does this file still contain the
+/// sentence we wrote?", which a user editing their own context file can answer
+/// "no" to for ever -- an unfixable, silent, every-launch regeneration.
+pub const MCP_FLAG: &str = "mcp";
+pub const NO_MCP_FLAG: &str = "nomcp";
+
+/// A parsed version marker.
+///
+/// `mcp` is `None` for files written before flags existed; the caller must then
+/// fall back to inspecting the body, and only for as long as it takes to write
+/// a flagged marker back.
+pub struct ContextMarker {
+    pub version: String,
+    pub mcp: Option<bool>,
+}
+
+/// Parses the version marker out of a context file, if it has one.
+pub fn parse_marker(content: &str) -> Option<ContextMarker> {
+    let line = content
+        .lines()
+        .find(|line| line.contains("roxlit-context-version:"))?;
+    let start = line.find(':')? + 1;
+    let end = line.find("-->")?;
+    if end <= start {
+        return None;
+    }
+
+    let mut fields = line[start..end].split_whitespace();
+    let version = fields.next()?.to_string();
+    let flags: Vec<&str> = fields.collect();
+    let mcp = if flags.is_empty() {
+        None
+    } else {
+        Some(flags.contains(&MCP_FLAG))
+    };
+
+    Some(ContextMarker { version, mcp })
+}
+
+/// The generated half of a context file: everything above the user's notes.
+///
+/// Any inspection of the body must go through this. Everything below
+/// `USER_NOTES_MARKER` belongs to the user, and a sentence quoted there -- a
+/// note explaining one of these very checks, say -- would otherwise be read as
+/// generated content and change what the launcher does.
+pub fn generated_half(content: &str) -> &str {
+    match content.find(USER_NOTES_MARKER) {
+        Some(pos) => &content[..pos],
+        None => content,
+    }
+}
+
 /// Returns the AI context file content with Roblox/Luau development instructions.
 /// This is the same content regardless of AI tool — only the filename changes.
 pub fn ai_context(project_name: &str, mcp_available: bool) -> String {
@@ -545,8 +600,10 @@ Use these as Pose names — they match Motor6D names in the character:
 
 "#;
 
+    let mcp_flag = if mcp_available { MCP_FLAG } else { NO_MCP_FLAG };
+
     format!(
-        r#"{VERSION_MARKER} {CONTEXT_VERSION} -->
+        r#"{VERSION_MARKER} {CONTEXT_VERSION} {mcp_flag} -->
 # {project_name}
 
 Roblox game project using Rojo for file syncing. Write Luau code in `src/` and Rojo syncs it to Roblox Studio in real time.

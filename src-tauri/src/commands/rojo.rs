@@ -650,29 +650,48 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
         .map(|h| h.join(".roxlit").join("bin").join(mcp_bin_name).exists())
         .unwrap_or(false);
 
-    // Check if regeneration is needed
+    // Check if regeneration is needed.
+    //
+    // Every input to this decision comes from the version marker. Deciding by
+    // grepping the body was tried and is a trap: it asks whether the file still
+    // contains a sentence we once wrote, and a user who edits their own context
+    // file answers "no" for ever -- silent regeneration on every single launch,
+    // with a matching version marker sitting right there saying the file is
+    // current. Body inspection survives only as a migration path for files
+    // written before the marker carried flags, and even then it is confined to
+    // the generated half (see templates::generated_half).
     let needs_regen = match &existing_file {
         None => true, // No context file at all
         Some(path) => {
             let content = std::fs::read_to_string(path).unwrap_or_default();
-            // Extract version from marker: <!-- roxlit-context-version: X.Y.Z -->
-            let file_version = content
-                .lines()
-                .find(|line| line.contains("roxlit-context-version:"))
-                .and_then(|line| {
-                    let start = line.find(':')? + 1;
-                    let end = line.find("-->")?;
-                    Some(line[start..end].trim())
-                });
-            let version_stale = match file_version {
-                None => true, // No version marker → pre-versioning file, always regenerate
-                Some(v) => v != templates::CONTEXT_VERSION,
-            };
-            // Also regenerate if MCP is now available but context was generated without it
-            let mcp_missing_from_context = mcp_available && !content.contains("Roxlit MCP server");
-            // Also regenerate if still referencing old rbxsync names
-            let has_old_rbxsync = content.contains("RbxSync MCP server") || content.contains("rbxsync");
-            version_stale || mcp_missing_from_context || has_old_rbxsync
+            match templates::parse_marker(&content) {
+                // No marker at all -> pre-versioning file, always regenerate.
+                None => true,
+                Some(marker) => {
+                    let version_stale = marker.version != templates::CONTEXT_VERSION;
+                    let mcp_stale = match marker.mcp {
+                        // The marker records how the file was generated, so a
+                        // mismatch either way is a real state change: MCP was
+                        // installed since, or removed since.
+                        Some(had_mcp) => had_mcp != mcp_available,
+                        // Pre-flag file: fall back to the body ONCE. The
+                        // regeneration this triggers writes a flagged marker,
+                        // so it cannot repeat.
+                        None => {
+                            let generated = templates::generated_half(&content);
+                            let had_mcp = generated.contains("Roxlit MCP server");
+                            had_mcp != mcp_available
+                        }
+                    };
+                    // Pre-rename files still naming the old product. Scoped to
+                    // the generated half: a user note that merely mentions the
+                    // old name is not a stale context file.
+                    let generated = templates::generated_half(&content);
+                    let has_old_name = generated.contains("RbxSync MCP server")
+                        || generated.contains("rbxsync");
+                    version_stale || mcp_stale || has_old_name
+                }
+            }
         }
     };
 
@@ -888,6 +907,10 @@ async fn auto_open_studio(project_path: &str, log_tx: Option<&tokio::sync::mpsc:
 }
 
 /// Check if Roblox Studio is already running.
+///
+/// `log_tx` is only read from the per-platform blocks below, so it is unused on
+/// platforms that have none -- same shape as `open_studio_url`.
+#[allow(unused_variables)]
 async fn is_studio_running(log_tx: Option<&tokio::sync::mpsc::UnboundedSender<String>>) -> bool {
     #[cfg(target_os = "windows")]
     {
