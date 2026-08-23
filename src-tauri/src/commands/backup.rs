@@ -162,22 +162,6 @@ pub fn find_stash_index(path: &str, backup_id: &str) -> Option<usize> {
     None
 }
 
-/// Check if a backup ID is a pre-restore backup.
-pub fn is_pre_restore_backup(path: &str, backup_id: &str) -> bool {
-    let manifest_path = Path::new(path).join(".roxlit").join("backups.jsonl");
-    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-        for line in content.lines() {
-            if let Ok(entry) = serde_json::from_str::<Value>(line) {
-                if entry["id"].as_str() == Some(backup_id) {
-                    if let Some(name) = entry["name"].as_str() {
-                        return name.starts_with("pre-restore-");
-                    }
-                }
-            }
-        }
-    }
-    false
-}
 
 /// Create a backup. Returns (backup_id, message) on success.
 pub fn create_backup(path: &str, name: &str) -> Result<(String, String), String> {
