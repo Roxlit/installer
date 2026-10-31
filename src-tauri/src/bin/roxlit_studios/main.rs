@@ -5,12 +5,14 @@
 //!   GET  /sessions         -> [Session]
 //!   POST /open  {"worktree":"C:/..."} -> Session (reuses a live one)
 //!   POST /close {"token":"..."}       -> {"ok":true}
-//!   GET  /                 -> viewer page (thumbnails, Take control / Give back)
-//!   GET  /shot/<token>     -> BMP of that session's Studio
-//!   POST /show|/hide {"token":"..."}  -> Session, reopened on Juan's / the hidden desktop
+//!   GET  /                 -> viewer page (live captures, Take control / Give back)
+//!   GET  /shot/<token>[?w=N] -> PNG of that session's Studio, at most N px wide
+//!   POST /show|/hide {"token":"..."}  -> Session, moved to the primary monitor / back
 
 #![windows_subsystem = "windows"]
 
+mod guard;
+mod screen;
 mod session;
 mod view;
 mod win;
@@ -107,14 +109,21 @@ fn handle(stream: TcpStream, mgr: &session::Manager) {
             view::PAGE.as_bytes(),
         ),
         ("GET", p) if p.starts_with("/shot/") => {
-            let token = p["/shot/".len()..].split('?').next().unwrap_or("");
-            match mgr.get(token).and_then(|s| view::shot(s.studio_pid)) {
-                Some(bmp) => reply_raw(stream, 200, "image/bmp", &bmp),
+            let (token, query) = p["/shot/".len()..].split_once('?').unwrap_or((&p[6..], ""));
+            let width = query
+                .split('&')
+                .find_map(|kv| kv.strip_prefix("w=")?.parse().ok())
+                .unwrap_or(960);
+            match mgr
+                .get(token)
+                .and_then(|s| view::shot(s.studio_pid, s.visible, width))
+            {
+                Some(png) => reply_raw(stream, 200, "image/png", &png),
                 None => reply(stream, 404, json!({"error": "no window to capture"})),
             }
         }
         ("POST", "/show") | ("POST", "/hide") => match body["token"].as_str() {
-            Some(t) => match mgr.set_visible(t, path == "/show") {
+            Some(t) => match mgr.set_front(t, path == "/show") {
                 Ok(s) => reply(stream, 200, json!(s)),
                 Err(e) => reply(stream, 400, json!({"error": e})),
             },
@@ -131,6 +140,11 @@ fn main() {
         Err(_) => return,
     };
     let mgr = Arc::new(session::Manager::new());
+    guard::start();
+    // Parked Studios still grab focus at times (load, play); taken ones are Juan's.
+    for s in mgr.list().iter().filter(|s| s.visible && !s.front) {
+        guard::watch(s.studio_pid);
+    }
     for stream in listener.incoming().flatten() {
         let mgr = mgr.clone();
         std::thread::spawn(move || handle(stream, &mgr));

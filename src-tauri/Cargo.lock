@@ -3284,6 +3284,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "futures-util",
+ "png",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

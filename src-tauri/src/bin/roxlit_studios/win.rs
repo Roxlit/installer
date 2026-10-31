@@ -1,8 +1,8 @@
 //! Win32 pieces for session Studios: launch on a hidden desktop, wait for the place to
 //! load, kill. Windows on a desktop that is not the input desktop are never shown on
-//! Juan's screens, never take his focus and get no taskbar button, so nothing here moves
-//! or activates windows (measured 2026-10-31: the splash cannot be moved from outside
-//! because Studio's UI thread does not pump while loading).
+//! Juan's screens, never take his focus and get no taskbar button (measured 2026-10-31:
+//! the splash cannot be moved from outside because Studio's UI thread does not pump while
+//! loading). Sessions Juan views live run on his desktop instead: see screen.rs.
 
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-type Hwnd = *mut c_void;
+pub(crate) type Hwnd = *mut c_void;
 type Handle = *mut c_void;
 
 /// Desktop that holds every session Studio.
@@ -86,6 +86,8 @@ extern "system" {
 }
 
 const GENERIC_ALL: u32 = 0x1000_0000;
+const STARTF_USESHOWWINDOW: u32 = 0x1;
+const SW_SHOWMINNOACTIVE: u16 = 7;
 
 fn wide(s: &str) -> Vec<u16> {
     std::ffi::OsStr::new(s)
@@ -129,7 +131,11 @@ pub fn launch(exe: &Path, place: &Path, visible: bool) -> std::io::Result<u32> {
     let cwd = wide(&exe.parent().unwrap_or(exe).to_string_lossy());
     let mut si: StartupInfo = unsafe { std::mem::zeroed() };
     si.cb = std::mem::size_of::<StartupInfo>() as u32;
-    if !visible {
+    if visible {
+        // Minimized and inactive; screen.rs parks it on the Studio display.
+        si.flags = STARTF_USESHOWWINDOW;
+        si.show_window = SW_SHOWMINNOACTIVE;
+    } else {
         si.desktop = desk.as_mut_ptr();
     }
     let mut pi: ProcessInformation = unsafe { std::mem::zeroed() };
@@ -159,7 +165,7 @@ pub fn launch(exe: &Path, place: &Path, visible: bool) -> std::io::Result<u32> {
 
 /// Visible windows of `pid`, with titles: on the hidden desktop, or on the manager's own
 /// (Juan's) when `visible`.
-fn windows_of(pid: u32, visible: bool) -> Vec<(Hwnd, String)> {
+pub(crate) fn windows_of(pid: u32, visible: bool) -> Vec<(Hwnd, String)> {
     extern "system" fn cb(h: Hwnd, lp: isize) -> i32 {
         let (pid, out) = unsafe { &mut *(lp as *mut (u32, Vec<(Hwnd, String)>)) };
         let mut p = 0u32;
@@ -181,9 +187,10 @@ fn windows_of(pid: u32, visible: bool) -> Vec<(Hwnd, String)> {
     state.1
 }
 
-/// Largest visible window of `pid` on the hidden desktop (Studio's main window).
-pub fn main_window(pid: u32) -> Option<Hwnd> {
-    windows_of(pid, false)
+/// Largest visible window of `pid` (Studio's main window), on the hidden desktop or on
+/// Juan's when `visible`.
+pub fn main_window_on(pid: u32, visible: bool) -> Option<Hwnd> {
+    windows_of(pid, visible)
         .into_iter()
         .map(|(h, _)| {
             let mut r = [0i32; 4];

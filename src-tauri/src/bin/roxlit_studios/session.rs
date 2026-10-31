@@ -5,6 +5,7 @@
 //! Every wait is capped; nothing here blocks forever on Studio or Rojo.
 
 use crate::win::{self, NoWindow};
+use crate::{guard, screen};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -36,9 +37,12 @@ pub struct Session {
     /// starting | ready | failed | crashed
     pub state: String,
     pub error: Option<String>,
-    /// On Juan's desktop after the viewer's "Take control".
+    /// On Juan's desktop, parked on the Studio display (false = hidden desktop fallback).
     #[serde(default)]
     pub visible: bool,
+    /// On the primary monitor after the viewer's "Take control".
+    #[serde(default)]
+    pub front: bool,
 }
 
 pub struct Manager {
@@ -121,19 +125,34 @@ fn cap_framerate() {
     let _ = fs::write(&path, out);
 }
 
-/// Launch Studio on `place` and wait until it has loaded; killed at the cap.
-pub(crate) fn launch_studio(place: &Path, name: &str, visible: bool) -> Result<u32, String> {
+/// Launch Studio on `place` and wait until it has loaded; killed at the cap. It goes to
+/// Juan's desktop parked on the Studio display (live view), or to the hidden desktop when
+/// that display is missing or ROXLIT_STUDIO_HIDDEN=1. Returns (pid, visible).
+fn launch_studio(place: &Path, name: &str) -> Result<(u32, bool), String> {
     let exe = studio_exe().ok_or("RobloxStudioBeta.exe not found")?;
     cap_framerate();
+    let area = match std::env::var("ROXLIT_STUDIO_HIDDEN").as_deref() {
+        Ok("1") => None,
+        _ => screen::studio_area(),
+    };
+    let visible = area.is_some();
     let pid = win::launch(&exe, place, visible).map_err(|e| format!("launch Studio: {e}"))?;
-    if !win::wait_loaded(pid, name, LOAD_CAP, visible) {
+    let loaded = match area {
+        Some(a) => {
+            guard::watch(pid);
+            screen::park_until_loaded(pid, a, name, LOAD_CAP)
+        }
+        None => win::wait_loaded(pid, name, LOAD_CAP, false),
+    };
+    if !loaded {
+        guard::unwatch(pid);
         win::kill_tree(pid);
         return Err(format!(
             "Studio did not load {name} within {} s",
             LOAD_CAP.as_secs()
         ));
     }
-    Ok(pid)
+    Ok((pid, visible))
 }
 
 /// Wait for a child with a cap; kill it at the cap.
@@ -267,6 +286,7 @@ impl Manager {
                     state: "starting".into(),
                     error: None,
                     visible: false,
+                    front: false,
                 },
             );
             self.save(&s);
@@ -277,9 +297,10 @@ impl Manager {
         let mut s = self.sessions.lock().unwrap();
         let sess = s.get_mut(&token).ok_or("session vanished")?;
         match result {
-            Ok((studio_pid, rojo_pid)) => {
+            Ok((studio_pid, rojo_pid, visible)) => {
                 sess.studio_pid = studio_pid;
                 sess.rojo_pid = rojo_pid;
+                sess.visible = visible;
                 sess.state = "ready".into();
             }
             Err(e) => {
@@ -292,10 +313,6 @@ impl Manager {
         Ok(out)
     }
 
-    pub(crate) fn place_path(&self, name: &str) -> PathBuf {
-        self.dir.join(name)
-    }
-
     fn start(
         &self,
         wt: &Path,
@@ -303,7 +320,7 @@ impl Manager {
         place: &Path,
         name: &str,
         port: u16,
-    ) -> Result<(u32, u32), String> {
+    ) -> Result<(u32, u32, bool), String> {
         // stdout and stderr share one log per step, so a failed build says why.
         let log = |suffix: &str| -> (Stdio, Stdio) {
             match fs::File::create(self.dir.join(format!("{token}.{suffix}.log"))) {
@@ -355,9 +372,9 @@ impl Manager {
             ));
         }
 
-        let studio_pid =
-            launch_studio(place, name, false).inspect_err(|_| win::kill_tree(rojo_pid))?;
-        Ok((studio_pid, rojo_pid))
+        let (studio_pid, visible) =
+            launch_studio(place, name).inspect_err(|_| win::kill_tree(rojo_pid))?;
+        Ok((studio_pid, rojo_pid, visible))
     }
 
     /// Project file that nests the worktree's `default.project.json` under a root named
@@ -383,6 +400,7 @@ impl Manager {
         let sess = s
             .remove(token)
             .ok_or_else(|| format!("no session {token}"))?;
+        guard::unwatch(sess.studio_pid);
         win::kill_tree(sess.studio_pid);
         win::kill_tree(sess.rojo_pid);
         self.save(&s);
