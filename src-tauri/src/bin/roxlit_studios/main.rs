@@ -5,10 +5,14 @@
 //!   GET  /sessions         -> [Session]
 //!   POST /open  {"worktree":"C:/..."} -> Session (reuses a live one)
 //!   POST /close {"token":"..."}       -> {"ok":true}
+//!   GET  /                 -> viewer page (thumbnails, Take control / Give back)
+//!   GET  /shot/<token>     -> BMP of that session's Studio
+//!   POST /show|/hide {"token":"..."}  -> Session, reopened on Juan's / the hidden desktop
 
 #![windows_subsystem = "windows"]
 
 mod session;
+mod view;
 mod win;
 
 use serde_json::{json, Value};
@@ -20,8 +24,16 @@ use std::time::Duration;
 const ADDR: &str = "127.0.0.1:19557";
 const MAX_BODY: usize = 64 * 1024;
 
-fn reply(mut stream: TcpStream, code: u16, body: Value) {
-    let text = body.to_string();
+fn reply(stream: TcpStream, code: u16, body: Value) {
+    reply_raw(
+        stream,
+        code,
+        "application/json",
+        body.to_string().as_bytes(),
+    )
+}
+
+fn reply_raw(mut stream: TcpStream, code: u16, kind: &str, body: &[u8]) {
     let status = match code {
         200 => "OK",
         400 => "Bad Request",
@@ -30,9 +42,10 @@ fn reply(mut stream: TcpStream, code: u16, body: Value) {
     };
     let _ = write!(
         stream,
-        "HTTP/1.1 {code} {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
-        text.len()
+        "HTTP/1.1 {code} {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        body.len()
     );
+    let _ = stream.write_all(body);
 }
 
 fn handle(stream: TcpStream, mgr: &session::Manager) {
@@ -84,6 +97,26 @@ fn handle(stream: TcpStream, mgr: &session::Manager) {
             Some(t) => match mgr.close(t) {
                 Ok(()) => reply(stream, 200, json!({"ok": true})),
                 Err(e) => reply(stream, 404, json!({"error": e})),
+            },
+            None => reply(stream, 400, json!({"error": "token required"})),
+        },
+        ("GET", "/") => reply_raw(
+            stream,
+            200,
+            "text/html; charset=utf-8",
+            view::PAGE.as_bytes(),
+        ),
+        ("GET", p) if p.starts_with("/shot/") => {
+            let token = p["/shot/".len()..].split('?').next().unwrap_or("");
+            match mgr.get(token).and_then(|s| view::shot(s.studio_pid)) {
+                Some(bmp) => reply_raw(stream, 200, "image/bmp", &bmp),
+                None => reply(stream, 404, json!({"error": "no window to capture"})),
+            }
+        }
+        ("POST", "/show") | ("POST", "/hide") => match body["token"].as_str() {
+            Some(t) => match mgr.set_visible(t, path == "/show") {
+                Ok(s) => reply(stream, 200, json!(s)),
+                Err(e) => reply(stream, 400, json!({"error": e})),
             },
             None => reply(stream, 400, json!({"error": "token required"})),
         },

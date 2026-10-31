@@ -36,15 +36,18 @@ pub struct Session {
     /// starting | ready | failed | crashed
     pub state: String,
     pub error: Option<String>,
+    /// On Juan's desktop after the viewer's "Take control".
+    #[serde(default)]
+    pub visible: bool,
 }
 
 pub struct Manager {
-    sessions: Mutex<HashMap<String, Session>>,
+    pub(crate) sessions: Mutex<HashMap<String, Session>>,
     dir: PathBuf,
     registry: PathBuf,
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -118,6 +121,21 @@ fn cap_framerate() {
     let _ = fs::write(&path, out);
 }
 
+/// Launch Studio on `place` and wait until it has loaded; killed at the cap.
+pub(crate) fn launch_studio(place: &Path, name: &str, visible: bool) -> Result<u32, String> {
+    let exe = studio_exe().ok_or("RobloxStudioBeta.exe not found")?;
+    cap_framerate();
+    let pid = win::launch(&exe, place, visible).map_err(|e| format!("launch Studio: {e}"))?;
+    if !win::wait_loaded(pid, name, LOAD_CAP, visible) {
+        win::kill_tree(pid);
+        return Err(format!(
+            "Studio did not load {name} within {} s",
+            LOAD_CAP.as_secs()
+        ));
+    }
+    Ok(pid)
+}
+
 /// Wait for a child with a cap; kill it at the cap.
 fn wait_capped(mut child: Child, cap: Duration) -> Result<(), String> {
     let start = Instant::now();
@@ -171,7 +189,7 @@ impl Manager {
         m
     }
 
-    fn save(&self, sessions: &HashMap<String, Session>) {
+    pub(crate) fn save(&self, sessions: &HashMap<String, Session>) {
         let tmp = self.registry.with_extension("tmp");
         if fs::write(
             &tmp,
@@ -248,6 +266,7 @@ impl Manager {
                     opened: now(),
                     state: "starting".into(),
                     error: None,
+                    visible: false,
                 },
             );
             self.save(&s);
@@ -271,6 +290,10 @@ impl Manager {
         let out = sess.clone();
         self.save(&s);
         Ok(out)
+    }
+
+    pub(crate) fn place_path(&self, name: &str) -> PathBuf {
+        self.dir.join(name)
     }
 
     fn start(
@@ -332,18 +355,8 @@ impl Manager {
             ));
         }
 
-        let exe = studio_exe().ok_or("RobloxStudioBeta.exe not found")?;
-        cap_framerate();
         let studio_pid =
-            win::launch_hidden(&exe, place).map_err(|e| format!("launch Studio: {e}"))?;
-        if !win::wait_loaded(studio_pid, name, LOAD_CAP) {
-            win::kill_tree(studio_pid);
-            win::kill_tree(rojo_pid);
-            return Err(format!(
-                "Studio did not load {name} within {} s",
-                LOAD_CAP.as_secs()
-            ));
-        }
+            launch_studio(place, name, false).inspect_err(|_| win::kill_tree(rojo_pid))?;
         Ok((studio_pid, rojo_pid))
     }
 

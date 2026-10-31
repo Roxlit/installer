@@ -64,6 +64,8 @@ extern "system" {
     fn GetWindowThreadProcessId(hwnd: Hwnd, pid: *mut u32) -> u32;
     fn IsWindowVisible(hwnd: Hwnd) -> i32;
     fn GetWindowTextW(hwnd: Hwnd, buf: *mut u16, max: i32) -> i32;
+    fn EnumWindows(cb: extern "system" fn(Hwnd, isize) -> i32, lparam: isize) -> i32;
+    fn GetWindowRect(hwnd: Hwnd, rect: *mut [i32; 4]) -> i32;
 }
 
 #[link(name = "kernel32")]
@@ -94,7 +96,7 @@ fn wide(s: &str) -> Vec<u16> {
 
 /// The hidden desktop, created once and held open for the manager's lifetime (opening
 /// it again after a manager restart returns the same desktop with its Studios).
-fn desktop() -> std::io::Result<Handle> {
+pub fn desktop() -> std::io::Result<Handle> {
     static DESK: OnceLock<usize> = OnceLock::new();
     let h = *DESK.get_or_init(|| {
         let name = wide(DESKTOP);
@@ -117,8 +119,9 @@ fn desktop() -> std::io::Result<Handle> {
     }
 }
 
-/// Start `exe place` on the hidden desktop. Returns the pid.
-pub fn launch_hidden(exe: &Path, place: &Path) -> std::io::Result<u32> {
+/// Start `exe place` on the hidden desktop, or on Juan's when `visible` (the viewer's
+/// "Take control"). Returns the pid.
+pub fn launch(exe: &Path, place: &Path, visible: bool) -> std::io::Result<u32> {
     desktop()?;
     let mut desk = wide(&format!("WinSta0\\{DESKTOP}"));
     let mut cmd = wide(&format!("\"{}\" \"{}\"", exe.display(), place.display()));
@@ -126,7 +129,9 @@ pub fn launch_hidden(exe: &Path, place: &Path) -> std::io::Result<u32> {
     let cwd = wide(&exe.parent().unwrap_or(exe).to_string_lossy());
     let mut si: StartupInfo = unsafe { std::mem::zeroed() };
     si.cb = std::mem::size_of::<StartupInfo>() as u32;
-    si.desktop = desk.as_mut_ptr();
+    if !visible {
+        si.desktop = desk.as_mut_ptr();
+    }
     let mut pi: ProcessInformation = unsafe { std::mem::zeroed() };
     let ok = unsafe {
         CreateProcessW(
@@ -152,33 +157,52 @@ pub fn launch_hidden(exe: &Path, place: &Path) -> std::io::Result<u32> {
     Ok(pi.process_id)
 }
 
-/// Titles of the visible windows of `pid` on the hidden desktop.
-fn titles_of(pid: u32) -> Vec<String> {
+/// Visible windows of `pid`, with titles: on the hidden desktop, or on the manager's own
+/// (Juan's) when `visible`.
+fn windows_of(pid: u32, visible: bool) -> Vec<(Hwnd, String)> {
     extern "system" fn cb(h: Hwnd, lp: isize) -> i32 {
-        let (pid, out) = unsafe { &mut *(lp as *mut (u32, Vec<String>)) };
+        let (pid, out) = unsafe { &mut *(lp as *mut (u32, Vec<(Hwnd, String)>)) };
         let mut p = 0u32;
         unsafe { GetWindowThreadProcessId(h, &mut p) };
         if p == *pid && unsafe { IsWindowVisible(h) } != 0 {
             let mut buf = [0u16; 512];
             let n = unsafe { GetWindowTextW(h, buf.as_mut_ptr(), buf.len() as i32) };
-            out.push(String::from_utf16_lossy(&buf[..n.max(0) as usize]));
+            out.push((h, String::from_utf16_lossy(&buf[..n.max(0) as usize])));
         }
         1
     }
-    let Ok(desk) = desktop() else {
-        return Vec::new();
-    };
     let mut state = (pid, Vec::new());
-    unsafe { EnumDesktopWindows(desk, cb, &mut state as *mut _ as isize) };
+    let lp = &mut state as *mut _ as isize;
+    if visible {
+        unsafe { EnumWindows(cb, lp) };
+    } else if let Ok(desk) = desktop() {
+        unsafe { EnumDesktopWindows(desk, cb, lp) };
+    }
     state.1
+}
+
+/// Largest visible window of `pid` on the hidden desktop (Studio's main window).
+pub fn main_window(pid: u32) -> Option<Hwnd> {
+    windows_of(pid, false)
+        .into_iter()
+        .map(|(h, _)| {
+            let mut r = [0i32; 4];
+            unsafe { GetWindowRect(h, &mut r) };
+            (h, (r[2] - r[0]) as i64 * (r[3] - r[1]) as i64)
+        })
+        .max_by_key(|(_, area)| *area)
+        .map(|(h, _)| h)
 }
 
 /// Wait until a window title of `pid` contains `marker` (the place is loaded). Gives up
 /// at `cap` or when the process dies.
-pub fn wait_loaded(pid: u32, marker: &str, cap: Duration) -> bool {
+pub fn wait_loaded(pid: u32, marker: &str, cap: Duration, visible: bool) -> bool {
     let start = Instant::now();
     while start.elapsed() < cap {
-        if titles_of(pid).iter().any(|t| t.contains(marker)) {
+        if windows_of(pid, visible)
+            .iter()
+            .any(|(_, t)| t.contains(marker))
+        {
             return true;
         }
         if !pid_alive(pid) {
