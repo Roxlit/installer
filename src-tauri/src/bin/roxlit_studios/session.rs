@@ -4,6 +4,7 @@
 //! that Studio reads the token from the place name and asks this manager for the port.
 //! Every wait is capped; nothing here blocks forever on Studio or Rojo.
 
+use crate::guard;
 use crate::win::{self, NoWindow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -160,8 +161,14 @@ impl Manager {
     pub fn refresh(&self) {
         let mut s = self.sessions.lock().unwrap();
         for sess in s.values_mut() {
-            if sess.state == "ready" && !win::pid_alive(sess.studio_pid) {
+            if sess.state != "ready" {
+                continue;
+            }
+            if win::pid_alive(sess.studio_pid) {
+                guard::watch(sess.studio_pid);
+            } else {
                 sess.state = "crashed".into();
+                guard::unwatch(sess.studio_pid);
                 win::kill_tree(sess.rojo_pid);
             }
         }
@@ -284,8 +291,10 @@ impl Manager {
         let exe = studio_exe().ok_or("RobloxStudioBeta.exe not found")?;
         let studio_pid =
             win::launch_inactive(&exe, place).map_err(|e| format!("launch Studio: {e}"))?;
+        guard::watch(studio_pid);
         let area = win::monitor_rect(&self.display);
         if !win::park_until_loaded(studio_pid, area, name, LOAD_CAP) {
+            guard::unwatch(studio_pid);
             win::kill_tree(studio_pid);
             win::kill_tree(rojo_pid);
             return Err(format!(
@@ -303,6 +312,7 @@ impl Manager {
         let sess = s
             .remove(token)
             .ok_or_else(|| format!("no session {token}"))?;
+        guard::unwatch(sess.studio_pid);
         win::kill_tree(sess.studio_pid);
         win::kill_tree(sess.rojo_pid);
         self.save(&s);
