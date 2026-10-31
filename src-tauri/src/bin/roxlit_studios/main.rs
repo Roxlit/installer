@@ -95,7 +95,7 @@ fn handle(stream: TcpStream, mgr: &session::Manager) {
         },
         ("GET", "/sessions") => reply(stream, 200, json!(mgr.list())),
         ("POST", "/open") => match body["worktree"].as_str() {
-            Some(wt) => match mgr.open(wt) {
+            Some(wt) => match mgr.open(wt, body["key"].as_str()) {
                 Ok(s) => reply(stream, 200, json!(s)),
                 Err(e) => reply(stream, 400, json!({"error": e})),
             },

@@ -59,12 +59,16 @@ pub(crate) fn now() -> u64 {
 }
 
 /// Stable 8-hex token per worktree path, so a worktree always gets the same place name.
-pub fn token_for(worktree: &Path) -> String {
-    let norm = worktree
+/// `key` splits one checkout into several sessions (one per chat in a main checkout).
+pub fn token_for(worktree: &Path, key: Option<&str>) -> String {
+    let mut norm = worktree
         .to_string_lossy()
         .replace('\\', "/")
         .trim_end_matches('/')
         .to_lowercase();
+    if let Some(k) = key {
+        norm = format!("{norm}#{k}");
+    }
     let mut h: u32 = 0x811c9dc5;
     for b in norm.bytes() {
         h ^= b as u32;
@@ -244,13 +248,13 @@ impl Manager {
         self.sessions.lock().unwrap().get(token).cloned()
     }
 
-    pub fn open(&self, worktree: &str) -> Result<Session, String> {
+    pub fn open(&self, worktree: &str, key: Option<&str>) -> Result<Session, String> {
         let wt = fs::canonicalize(worktree).map_err(|e| format!("worktree {worktree}: {e}"))?;
         let wt = PathBuf::from(wt.to_string_lossy().trim_start_matches(r"\\?\"));
         if !wt.join("default.project.json").exists() {
             return Err(format!("{} has no default.project.json", wt.display()));
         }
-        let token = token_for(&wt);
+        let token = token_for(&wt, key);
         let place_name = format!("roxlit-{token}.rbxl");
         let place = self.dir.join(&place_name);
 
