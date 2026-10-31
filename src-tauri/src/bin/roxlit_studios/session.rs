@@ -1,10 +1,9 @@
 //! Session Studios: one per worktree. Open = `rojo build` the worktree to a local place
 //! named `roxlit-<token>.rbxl`, `rojo serve` it on its own port, launch Studio on that
-//! file without focus and park it on the Studio display. The Roxlit session plugin in
+//! file on the hidden Studio desktop. The Roxlit session plugin in
 //! that Studio reads the token from the place name and asks this manager for the port.
 //! Every wait is capped; nothing here blocks forever on Studio or Rojo.
 
-use crate::guard;
 use crate::win::{self, NoWindow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,6 +18,9 @@ const FIRST_PORT: u16 = 34900;
 const BUILD_CAP: Duration = Duration::from_secs(120);
 const SERVE_CAP: Duration = Duration::from_secs(30);
 const LOAD_CAP: Duration = Duration::from_secs(120);
+/// Playtest fps cap. The hidden desktop has no vsync, so an uncapped Studio renders at
+/// the global `FramerateCap` (240 measured, ~1.7x the GPU of a 60 fps Studio).
+const FPS_CAP: i64 = 60;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -40,7 +42,6 @@ pub struct Manager {
     sessions: Mutex<HashMap<String, Session>>,
     dir: PathBuf,
     registry: PathBuf,
-    display: String,
 }
 
 fn now() -> u64 {
@@ -89,6 +90,34 @@ fn studio_exe() -> Option<PathBuf> {
         .max_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok())
 }
 
+/// Lower Studio's global `FramerateCap` to FPS_CAP before a launch. The setting is shared
+/// by every Studio (no per-process override: Studio ignores a LOCALAPPDATA override and
+/// Luau cannot set it) and a running Studio writes its own value back on exit, so this
+/// runs before each launch.
+fn cap_framerate() {
+    let Some(path) = dirs::data_local_dir()
+        .map(|d| d.join("Roblox").join("GlobalBasicSettings_13_Studio.xml"))
+    else {
+        return;
+    };
+    let Ok(xml) = fs::read_to_string(&path) else {
+        return;
+    };
+    const KEY: &str = "<int name=\"FramerateCap\">";
+    let Some(at) = xml.find(KEY).map(|i| i + KEY.len()) else {
+        return;
+    };
+    let Some(len) = xml[at..].find('<') else {
+        return;
+    };
+    let cur: i64 = xml[at..at + len].trim().parse().unwrap_or(-1);
+    if cur > 0 && cur <= FPS_CAP {
+        return;
+    }
+    let out = format!("{}{FPS_CAP}{}", &xml[..at], &xml[at + len..]);
+    let _ = fs::write(&path, out);
+}
+
 /// Wait for a child with a cap; kill it at the cap.
 fn wait_capped(mut child: Child, cap: Duration) -> Result<(), String> {
     let start = Instant::now();
@@ -133,13 +162,10 @@ impl Manager {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
-        let display =
-            std::env::var("ROXLIT_STUDIO_DISPLAY").unwrap_or_else(|_| r"\\.\DISPLAY5".into());
         let m = Manager {
             sessions: Mutex::new(sessions),
             dir,
             registry,
-            display,
         };
         m.refresh();
         m
@@ -164,11 +190,8 @@ impl Manager {
             if sess.state != "ready" {
                 continue;
             }
-            if win::pid_alive(sess.studio_pid) {
-                guard::watch(sess.studio_pid);
-            } else {
+            if !win::pid_alive(sess.studio_pid) {
                 sess.state = "crashed".into();
-                guard::unwatch(sess.studio_pid);
                 win::kill_tree(sess.rojo_pid);
             }
         }
@@ -289,12 +312,10 @@ impl Manager {
         }
 
         let exe = studio_exe().ok_or("RobloxStudioBeta.exe not found")?;
+        cap_framerate();
         let studio_pid =
-            win::launch_inactive(&exe, place).map_err(|e| format!("launch Studio: {e}"))?;
-        guard::watch(studio_pid);
-        let area = win::monitor_rect(&self.display);
-        if !win::park_until_loaded(studio_pid, area, name, LOAD_CAP) {
-            guard::unwatch(studio_pid);
+            win::launch_hidden(&exe, place).map_err(|e| format!("launch Studio: {e}"))?;
+        if !win::wait_loaded(studio_pid, name, LOAD_CAP) {
             win::kill_tree(studio_pid);
             win::kill_tree(rojo_pid);
             return Err(format!(
@@ -312,7 +333,6 @@ impl Manager {
         let sess = s
             .remove(token)
             .ok_or_else(|| format!("no session {token}"))?;
-        guard::unwatch(sess.studio_pid);
         win::kill_tree(sess.studio_pid);
         win::kill_tree(sess.rojo_pid);
         self.save(&s);

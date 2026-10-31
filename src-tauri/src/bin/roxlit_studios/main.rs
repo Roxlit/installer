@@ -8,7 +8,6 @@
 
 #![windows_subsystem = "windows"]
 
-mod guard;
 mod session;
 mod win;
 
@@ -98,7 +97,6 @@ fn main() {
         Ok(l) => l,
         Err(_) => return,
     };
-    guard::start();
     let mgr = Arc::new(session::Manager::new());
     for stream in listener.incoming().flatten() {
         let mgr = mgr.clone();
