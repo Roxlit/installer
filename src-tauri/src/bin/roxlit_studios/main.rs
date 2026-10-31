@@ -23,6 +23,12 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[link(name = "user32")]
+extern "system" {
+    fn SetProcessDpiAwarenessContext(ctx: isize) -> i32;
+}
+
+const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 const ADDR: &str = "127.0.0.1:19557";
 const MAX_BODY: usize = 64 * 1024;
 
@@ -139,6 +145,9 @@ fn main() {
         Ok(l) => l,
         Err(_) => return,
     };
+    // Without this, Windows scales every window rect to 96 dpi for us (Juan's displays are
+    // at 125%) and captures come out cropped to 80% of the window.
+    unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     let mgr = Arc::new(session::Manager::new());
     guard::start();
     // Parked Studios still grab focus at times (load, play); taken ones are Juan's.
