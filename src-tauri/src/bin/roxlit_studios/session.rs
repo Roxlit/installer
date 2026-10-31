@@ -95,8 +95,8 @@ fn studio_exe() -> Option<PathBuf> {
 /// Luau cannot set it) and a running Studio writes its own value back on exit, so this
 /// runs before each launch.
 fn cap_framerate() {
-    let Some(path) = dirs::data_local_dir()
-        .map(|d| d.join("Roblox").join("GlobalBasicSettings_13_Studio.xml"))
+    let Some(path) =
+        dirs::data_local_dir().map(|d| d.join("Roblox").join("GlobalBasicSettings_13_Studio.xml"))
     else {
         return;
     };
@@ -281,25 +281,46 @@ impl Manager {
         name: &str,
         port: u16,
     ) -> Result<(u32, u32), String> {
-        let log =
-            |suffix: &str| fs::File::create(self.dir.join(format!("{token}.{suffix}.log"))).ok();
+        // stdout and stderr share one log per step, so a failed build says why.
+        let log = |suffix: &str| -> (Stdio, Stdio) {
+            match fs::File::create(self.dir.join(format!("{token}.{suffix}.log"))) {
+                Ok(f) => match f.try_clone() {
+                    Ok(g) => (Stdio::from(f), Stdio::from(g)),
+                    Err(_) => (Stdio::from(f), Stdio::null()),
+                },
+                Err(_) => (Stdio::null(), Stdio::null()),
+            }
+        };
+        let project = self.wrapper(wt, token, name)?;
+        let (out, err) = log("build");
         let build = Command::new(rojo_exe())
             .current_dir(wt)
             .creation_flags_no_window()
-            .args(["build", "default.project.json", "-o"])
+            .arg("build")
+            .arg(&project)
+            .arg("-o")
             .arg(place)
-            .stdout(log("build").map(Stdio::from).unwrap_or(Stdio::null()))
-            .stderr(Stdio::null())
+            .stdout(out)
+            .stderr(err)
             .spawn()
             .map_err(|e| format!("rojo build: {e}"))?;
-        wait_capped(build, BUILD_CAP).map_err(|e| format!("rojo build {e}"))?;
+        wait_capped(build, BUILD_CAP).map_err(|e| {
+            let tail = fs::read_to_string(self.dir.join(format!("{token}.build.log")))
+                .map(|t| t.lines().rev().take(3).collect::<Vec<_>>().join(" | "))
+                .unwrap_or_default();
+            format!("rojo build {e}: {tail}")
+        })?;
+
+        let (out, err) = log("serve");
 
         let serve = Command::new(rojo_exe())
             .current_dir(wt)
             .creation_flags_no_window()
-            .args(["serve", "default.project.json", "--port", &port.to_string()])
-            .stdout(log("serve").map(Stdio::from).unwrap_or(Stdio::null()))
-            .stderr(Stdio::null())
+            .arg("serve")
+            .arg(&project)
+            .args(["--port", &port.to_string()])
+            .stdout(out)
+            .stderr(err)
             .spawn()
             .map_err(|e| format!("rojo serve: {e}"))?;
         let rojo_pid = serve.id();
@@ -324,6 +345,22 @@ impl Manager {
             ));
         }
         Ok((studio_pid, rojo_pid))
+    }
+
+    /// Project file that nests the worktree's `default.project.json` under a root named
+    /// after the place. The Roblox Studio MCP lists a local place by `game.Name`, and Rojo
+    /// renames the DataModel to the project name on sync, so without this two worktrees
+    /// of one game would both list as e.g. "Driply" and the session plugin, which reads
+    /// the token from `game.Name`, would lose it after the first sync.
+    fn wrapper(&self, wt: &Path, token: &str, name: &str) -> Result<PathBuf, String> {
+        let inner = wt.join("default.project.json");
+        let body = serde_json::json!({
+            "name": name,
+            "tree": { "$path": inner.to_string_lossy().replace('\\', "/") },
+        });
+        let path = self.dir.join(format!("{token}.project.json"));
+        fs::write(&path, body.to_string()).map_err(|e| format!("write {}: {e}", path.display()))?;
+        Ok(path)
     }
 
     /// Close = kill. The worktree holds the scripts and managed tree; the place file

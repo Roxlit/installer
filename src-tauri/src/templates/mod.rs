@@ -1,4 +1,5 @@
 pub mod context_packs;
+pub mod studio_sessions;
 
 /// Returns the default.project.json content for Rojo.
 pub fn project_json(project_name: &str) -> String {

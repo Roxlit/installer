@@ -22,6 +22,7 @@ These files contain curated Roblox/Luau documentation to help you write correct 
 | `replication.md` | What replicates, FilteringEnabled rules, RunContext |
 | `services-reference.md` | Service properties, enums, valid ranges |
 | `studio-ui.md` | Studio UI: panel locations, testing modes, localized names, troubleshooting |
+| `studio-sessions.md` | Session Studios for parallel chats (one per worktree), device simulator helpers and layout matrix |
 | `mcp-tools.md` | MCP tools reference: when to use run_code vs execute_luau, get_logs vs console_output, backup workflow, telemetry, and which tools are dangerous |
 
 ## How to Use
