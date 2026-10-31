@@ -33,3 +33,7 @@ winreg = "0.52"
 [[bin]]
 name = "roxlit-mcp"
 path = "src/bin/roxlit_mcp.rs"
+
+[[bin]]
+name = "roxlit-studios"
+path = "src/bin/roxlit_studios/main.rs"
