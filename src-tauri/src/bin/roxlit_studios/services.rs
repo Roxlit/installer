@@ -251,9 +251,60 @@ fn refuse(mut s: TcpStream, code: u16, body: Value) {
     );
 }
 
-/// Copy bytes one way, stamping `traffic` on every chunk.
+/// Rewrite an HTTP head to `Connection: close`, unless it is a protocol upgrade.
+/// Returns None when `buf` holds no complete head yet.
+fn close_head(buf: &[u8]) -> Option<Vec<u8>> {
+    let end = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let head = String::from_utf8_lossy(&buf[..end]);
+    if head.to_ascii_lowercase().contains("\r\nupgrade:") {
+        return Some(buf.to_vec());
+    }
+    let mut out = String::with_capacity(end + 24);
+    for (i, line) in head.split("\r\n").enumerate() {
+        let l = line.to_ascii_lowercase();
+        if i > 0 && (l.starts_with("connection:") || l.starts_with("keep-alive:")) {
+            continue;
+        }
+        out.push_str(line);
+        out.push_str("\r\n");
+    }
+    out.push_str("Connection: close\r\n\r\n");
+    let mut v = out.into_bytes();
+    v.extend_from_slice(&buf[end + 4..]);
+    Some(v)
+}
+
+/// Copy bytes one way, stamping `traffic` on every chunk. The first HTTP head that
+/// passes is rewritten to `Connection: close`, so each proxied connection carries one
+/// request: a keep-alive pool would otherwise stay on a process after a reload
+/// replaced it, and lose a request when that process is killed.
 fn pipe(mut from: TcpStream, mut to: TcpStream, traffic: &AtomicU64) {
+    const HEAD_CAP: usize = 64 * 1024;
     let mut buf = [0u8; 16 * 1024];
+    let mut head: Vec<u8> = Vec::new();
+    let mut in_head = true;
+    while in_head {
+        match from.read(&mut buf) {
+            Ok(0) | Err(_) => {
+                let _ = to.write_all(&head);
+                let _ = to.shutdown(Shutdown::Write);
+                return;
+            }
+            Ok(n) => {
+                traffic.store(now_ms(), Ordering::Relaxed);
+                head.extend_from_slice(&buf[..n]);
+                let out = match close_head(&head) {
+                    Some(v) => v,
+                    None if head.len() > HEAD_CAP => std::mem::take(&mut head),
+                    None => continue,
+                };
+                if to.write_all(&out).is_err() {
+                    return;
+                }
+                in_head = false;
+            }
+        }
+    }
     loop {
         match from.read(&mut buf) {
             Ok(0) | Err(_) => break,
@@ -1152,5 +1203,32 @@ impl Services {
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::close_head;
+
+    #[test]
+    fn request_head_gets_connection_close() {
+        let req =
+            b"GET /feed HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\nKeep-Alive: 5\r\n\r\nbody";
+        let out = String::from_utf8(close_head(req).unwrap()).unwrap();
+        assert_eq!(
+            out,
+            "GET /feed HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\nbody"
+        );
+    }
+
+    #[test]
+    fn incomplete_head_waits() {
+        assert!(close_head(b"GET / HTTP/1.1\r\nHost: x\r\n").is_none());
+    }
+
+    #[test]
+    fn upgrade_passes_untouched() {
+        let req = b"GET /ws HTTP/1.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+        assert_eq!(close_head(req).unwrap(), req.to_vec());
     }
 }
