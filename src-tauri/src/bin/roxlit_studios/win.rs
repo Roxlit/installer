@@ -229,6 +229,36 @@ pub fn pid_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+#[link(name = "kernel32")]
+extern "system" {
+    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+    fn GetProcessTimes(h: Handle, c: *mut u64, e: *mut u64, k: *mut u64, u: *mut u64) -> i32;
+    fn GetExitCodeProcess(h: Handle, code: *mut u32) -> i32;
+}
+
+/// Creation time (FILETIME ticks) of a running process, None once it has exited. A pid
+/// plus its creation time names one process for good: Windows reuses pids, so a saved
+/// pid alone could point a restarted manager at (and make it kill) an unrelated process.
+pub fn started_at(pid: u32) -> Option<u64> {
+    const QUERY_LIMITED: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+    if pid == 0 {
+        return None;
+    }
+    unsafe {
+        let h = OpenProcess(QUERY_LIMITED, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let (mut c, mut e, mut k, mut u, mut code) = (0u64, 0u64, 0u64, 0u64, 0u32);
+        let ok = GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) != 0
+            && GetExitCodeProcess(h, &mut code) != 0
+            && code == STILL_ACTIVE;
+        CloseHandle(h);
+        ok.then_some(c)
+    }
+}
+
 pub fn kill_tree(pid: u32) {
     let _ = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])

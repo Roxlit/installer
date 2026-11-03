@@ -199,10 +199,18 @@ impl Manager {
         let dir = root.join("sessions");
         let _ = fs::create_dir_all(&dir);
         let registry = root.join("studios.json");
-        let sessions: HashMap<String, Session> = fs::read(&registry)
+        let mut sessions: HashMap<String, Session> = fs::read(&registry)
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
+        // An open runs on a thread of the manager that saved it: a "starting" session from
+        // a previous manager has nobody finishing it and would block every reopen.
+        for s in sessions.values_mut().filter(|s| s.state == "starting") {
+            win::kill_tree(s.studio_pid);
+            win::kill_tree(s.rojo_pid);
+            s.state = "failed".into();
+            s.error = Some("manager restarted while opening; open again".into());
+        }
         let m = Manager {
             sessions: Mutex::new(sessions),
             dir,

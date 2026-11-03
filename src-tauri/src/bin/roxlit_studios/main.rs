@@ -1,7 +1,9 @@
 //! roxlit-studios: session manager for parallel Roblox Studios (IDEA-067).
 //! HTTP on 127.0.0.1:19557, separate from the launcher so it can be restarted alone.
 //!
-//!   GET  /session/<token>  -> {"rojoPort":N}   (asked by the Roxlit session plugin)
+//!   GET  /session/<token>  -> {"rojoPort":N,"attributes":{attr:url},"managed":[attr]}
+//!                             (asked by the Roxlit session plugin; attributes go on
+//!                             ReplicatedStorage, managed ones without a URL are cleared)
 //!   GET  /sessions         -> [Session]
 //!   POST /open  {"worktree":"C:/..."} -> Session (reuses a live one)
 //!   POST /close {"token":"..."}       -> {"ok":true}
@@ -12,6 +14,8 @@
 //!   POST /services/start {"name":"...","tier":"..."?} -> start / change tier, waits until ready
 //!   POST /services/stop  {"name":"..."}
 //!   POST /services/warm  {"cwd":"C:/..."} -> start the services of that project (playtest start)
+//!   POST /services/private {"worktree":"C:/...","name":"...","cwd":"C:/..."|null}
+//!        -> point that game worktree at a private copy of the service (null: back to shared)
 
 #![windows_subsystem = "windows"]
 
@@ -61,7 +65,7 @@ fn reply_raw(mut stream: TcpStream, code: u16, kind: &str, body: &[u8]) {
     let _ = stream.write_all(body);
 }
 
-fn handle(stream: TcpStream, mgr: &session::Manager, svcs: &services::Services) {
+fn handle(stream: TcpStream, mgr: &session::Manager, svcs: &Arc<services::Services>) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
@@ -94,7 +98,21 @@ fn handle(stream: TcpStream, mgr: &session::Manager, svcs: &services::Services) 
     match (method, path) {
         ("GET", p) if p.starts_with("/session/") => match mgr.get(&p["/session/".len()..]) {
             Some(s) if s.state == "starting" || s.state == "ready" => {
-                reply(stream, 200, json!({"rojoPort": s.rojo_port}))
+                // JSON null is dropped by Luau's JSONDecode, so the attributes to clear
+                // travel as a list: `managed` = every attribute, `attributes` = set ones.
+                let all = svcs.attributes_for(&s.worktree);
+                let all = all.as_object().cloned().unwrap_or_default();
+                let managed: Vec<&String> = all.keys().collect();
+                let set: serde_json::Map<String, Value> = all
+                    .iter()
+                    .filter(|(_, v)| !v.is_null())
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                reply(
+                    stream,
+                    200,
+                    json!({"rojoPort": s.rojo_port, "attributes": set, "managed": managed}),
+                )
             }
             _ => reply(stream, 404, json!({"error": "no live session"})),
         },
@@ -158,6 +176,13 @@ fn handle(stream: TcpStream, mgr: &session::Manager, svcs: &services::Services) 
         ("POST", "/services/warm") => match body["cwd"].as_str() {
             Some(c) => reply(stream, 200, json!({"warming": svcs.warm_for(c)})),
             None => reply(stream, 400, json!({"error": "cwd required"})),
+        },
+        ("POST", "/services/private") => match (body["worktree"].as_str(), body["name"].as_str()) {
+            (Some(wt), Some(n)) => match svcs.set_private(wt, n, body["cwd"].as_str()) {
+                Ok(attrs) => reply(stream, 200, json!({"attributes": attrs})),
+                Err(e) => reply(stream, 400, json!({"error": e})),
+            },
+            _ => reply(stream, 400, json!({"error": "worktree and name required"})),
         },
         _ => reply(stream, 404, json!({"error": "unknown route"})),
     }
