@@ -219,6 +219,29 @@ impl Services {
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
         let mut map = self.map.lock().unwrap();
+        // Dropped from the registry, or moved to another port: stop it and let its
+        // listener go (re-added below on the new port if it is still registered).
+        let gone: Vec<String> = map
+            .values()
+            .filter(|s| {
+                !reg.services
+                    .iter()
+                    .any(|r| r.name == s.st.name && r.port == s.spec.port)
+            })
+            .map(|s| s.st.name.clone())
+            .collect();
+        for name in gone {
+            if let Some(svc) = map.remove(&name) {
+                if svc.child.is_some() {
+                    win::kill_tree(svc.st.pid);
+                }
+                if svc.listening {
+                    // Wake the blocked accept so the listener sees it is gone.
+                    let _ = TcpStream::connect(("127.0.0.1", svc.spec.port));
+                }
+                log(&self.dir, &format!("{name}: removed from registry"));
+            }
+        }
         for spec in reg.services {
             match map.get_mut(&spec.name) {
                 Some(svc) => svc.spec = spec, // applies on the next start
@@ -258,10 +281,11 @@ impl Services {
             match TcpListener::bind(("127.0.0.1", port)) {
                 Ok(l) => break l,
                 Err(_) => {
-                    if let Some(s) = self.map.lock().unwrap().get_mut(name) {
-                        if s.child.is_none() {
-                            s.st.state = "external".into();
-                        }
+                    match self.map.lock().unwrap().get_mut(name) {
+                        Some(s) if s.spec.port != port => return,
+                        Some(s) if s.child.is_none() => s.st.state = "external".into(),
+                        Some(_) => {}
+                        None => return,
                     }
                     std::thread::sleep(Duration::from_secs(15));
                 }
@@ -275,6 +299,11 @@ impl Services {
         }
         log(&self.dir, &format!("{name}: listening on {port}"));
         for stream in listener.incoming().flatten() {
+            let current = self.map.lock().unwrap().get(name).map(|s| s.spec.port);
+            if current != Some(port) {
+                log(&self.dir, &format!("{name}: released port {port}"));
+                return;
+            }
             let me = self.clone();
             let n = name.to_string();
             std::thread::spawn(move || me.serve(&n, stream));
