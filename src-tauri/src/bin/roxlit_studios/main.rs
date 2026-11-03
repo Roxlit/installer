@@ -8,11 +8,16 @@
 //!   GET  /                 -> viewer page (live captures, Take control / Give back)
 //!   GET  /shot/<token>[?w=N] -> PNG of that session's Studio, at most N px wide
 //!   POST /show|/hide {"token":"..."}  -> Session, moved to the primary monitor / back
+//!   GET  /services         -> [Status] of the on-demand dev services (IDEA-069)
+//!   POST /services/start {"name":"...","tier":"..."?} -> start / change tier, waits until ready
+//!   POST /services/stop  {"name":"..."}
+//!   POST /services/warm  {"cwd":"C:/..."} -> start the services of that project (playtest start)
 
 #![windows_subsystem = "windows"]
 
 mod guard;
 mod screen;
+mod services;
 mod session;
 mod view;
 mod win;
@@ -56,7 +61,7 @@ fn reply_raw(mut stream: TcpStream, code: u16, kind: &str, body: &[u8]) {
     let _ = stream.write_all(body);
 }
 
-fn handle(stream: TcpStream, mgr: &session::Manager) {
+fn handle(stream: TcpStream, mgr: &session::Manager, svcs: &services::Services) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
@@ -135,6 +140,25 @@ fn handle(stream: TcpStream, mgr: &session::Manager) {
             },
             None => reply(stream, 400, json!({"error": "token required"})),
         },
+        ("GET", "/services") => reply(stream, 200, json!(svcs.list())),
+        ("POST", "/services/start") => match body["name"].as_str() {
+            Some(n) => match svcs.start_and_wait(n, body["tier"].as_str()) {
+                Ok(s) => reply(stream, 200, json!(s)),
+                Err(e) => reply(stream, 400, json!({"error": e})),
+            },
+            None => reply(stream, 400, json!({"error": "name required"})),
+        },
+        ("POST", "/services/stop") => match body["name"].as_str() {
+            Some(n) => match svcs.stop(n) {
+                Ok(()) => reply(stream, 200, json!({"ok": true})),
+                Err(e) => reply(stream, 404, json!({"error": e})),
+            },
+            None => reply(stream, 400, json!({"error": "name required"})),
+        },
+        ("POST", "/services/warm") => match body["cwd"].as_str() {
+            Some(c) => reply(stream, 200, json!({"warming": svcs.warm_for(c)})),
+            None => reply(stream, 400, json!({"error": "cwd required"})),
+        },
         _ => reply(stream, 404, json!({"error": "unknown route"})),
     }
 }
@@ -149,13 +173,14 @@ fn main() {
     // at 125%) and captures come out cropped to 80% of the window.
     unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     let mgr = Arc::new(session::Manager::new());
+    let svcs = services::Services::new();
     guard::start();
     // Parked Studios still grab focus at times (load, play); taken ones are Juan's.
     for s in mgr.list().iter().filter(|s| s.visible && !s.front) {
         guard::watch(s.studio_pid);
     }
     for stream in listener.incoming().flatten() {
-        let mgr = mgr.clone();
-        std::thread::spawn(move || handle(stream, &mgr));
+        let (mgr, svcs) = (mgr.clone(), svcs.clone());
+        std::thread::spawn(move || handle(stream, &mgr, &svcs));
     }
 }
