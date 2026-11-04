@@ -126,7 +126,7 @@ fn inside(h: Hwnd, area: Rect) -> bool {
 }
 
 /// Fill `area` with window `h` without activating it. Returns true if it moved.
-fn park(h: Hwnd, area: Rect) -> bool {
+pub fn park(h: Hwnd, area: Rect) -> bool {
     if inside(h, area) {
         return false;
     }
@@ -141,34 +141,18 @@ fn park(h: Hwnd, area: Rect) -> bool {
     true
 }
 
-/// Keep every window of `pid` on `area` until a title contains `marker` (the place is
-/// loaded). Gives up at `cap`. Studio relayouts for a while after load, so a thread keeps
-/// parking for RELAYOUT more without holding up the caller.
-pub fn park_until_loaded(pid: u32, area: Rect, marker: &str, cap: Duration) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < cap {
-        let wins = win::windows_of(pid, true);
-        for (h, _) in &wins {
-            park(*h, area);
+/// Studio relayouts for a while after load, so a thread keeps parking its windows for
+/// RELAYOUT more without holding up the caller.
+pub fn keep_parked(pid: u32, area: Rect) {
+    std::thread::spawn(move || {
+        let t = Instant::now();
+        while t.elapsed() < RELAYOUT {
+            for (h, _) in win::windows_of(pid, true) {
+                park(h, area);
+            }
+            std::thread::sleep(Duration::from_millis(50));
         }
-        if wins.iter().any(|(_, t)| t.contains(marker)) {
-            std::thread::spawn(move || {
-                let t = Instant::now();
-                while t.elapsed() < RELAYOUT {
-                    for (h, _) in win::windows_of(pid, true) {
-                        park(h, area);
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-            });
-            return true;
-        }
-        if !win::pid_alive(pid) {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
+    });
 }
 
 /// "Take control": maximize the Studio on the primary monitor and bring it to the front.

@@ -8,7 +8,6 @@ use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
 
 pub(crate) type Hwnd = *mut c_void;
 type Handle = *mut c_void;
@@ -201,25 +200,6 @@ pub fn main_window_on(pid: u32, visible: bool) -> Option<Hwnd> {
         .map(|(h, _)| h)
 }
 
-/// Wait until a window title of `pid` contains `marker` (the place is loaded). Gives up
-/// at `cap` or when the process dies.
-pub fn wait_loaded(pid: u32, marker: &str, cap: Duration, visible: bool) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < cap {
-        if windows_of(pid, visible)
-            .iter()
-            .any(|(_, t)| t.contains(marker))
-        {
-            return true;
-        }
-        if !pid_alive(pid) {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    false
-}
-
 pub fn pid_alive(pid: u32) -> bool {
     let out = std::process::Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
@@ -257,6 +237,97 @@ pub fn started_at(pid: u32) -> Option<u64> {
         CloseHandle(h);
         ok.then_some(c)
     }
+}
+
+#[repr(C)]
+struct ProcessEntry {
+    size: u32,
+    usage: u32,
+    pid: u32,
+    heap: usize,
+    module: u32,
+    threads: u32,
+    ppid: u32,
+    priority: i32,
+    flags: u32,
+    exe: [u16; 260],
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> Handle;
+    fn Process32FirstW(snap: Handle, entry: *mut ProcessEntry) -> i32;
+    fn Process32NextW(snap: Handle, entry: *mut ProcessEntry) -> i32;
+}
+
+/// Every running process as (pid, parent pid, exe name).
+pub fn processes() -> Vec<(u32, u32, String)> {
+    const SNAPPROCESS: u32 = 2;
+    let mut out = Vec::new();
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(SNAPPROCESS, 0);
+        if snap as isize == -1 {
+            return out;
+        }
+        let mut e: ProcessEntry = std::mem::zeroed();
+        e.size = std::mem::size_of::<ProcessEntry>() as u32;
+        let mut ok = Process32FirstW(snap, &mut e);
+        while ok != 0 {
+            let n = e.exe.iter().position(|&c| c == 0).unwrap_or(260);
+            out.push((e.pid, e.ppid, String::from_utf16_lossy(&e.exe[..n])));
+            ok = Process32NextW(snap, &mut e);
+        }
+        CloseHandle(snap);
+    }
+    out
+}
+
+pub fn running(exe: &str) -> bool {
+    processes().iter().any(|p| p.2.eq_ignore_ascii_case(exe))
+}
+
+/// A live process named `exe` among the descendants of `root` (which may have exited:
+/// children keep its pid as their parent).
+pub fn descendant(root: u32, exe: &str) -> Option<u32> {
+    let all = processes();
+    let mut tree = vec![root];
+    let mut i = 0;
+    while i < tree.len() {
+        let parent = tree[i];
+        let kids: Vec<&(u32, u32, String)> = all
+            .iter()
+            .filter(|p| p.1 == parent && p.0 != root && !tree.contains(&p.0))
+            .collect();
+        for p in kids {
+            if p.2.eq_ignore_ascii_case(exe) {
+                return Some(p.0);
+            }
+            tree.push(p.0);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Pid of a visible window on Juan's desktop whose title contains `marker`.
+pub fn pid_with_title(marker: &str) -> Option<u32> {
+    extern "system" fn cb(h: Hwnd, lp: isize) -> i32 {
+        let (marker, out) = unsafe { &mut *(lp as *mut (&str, Option<u32>)) };
+        if unsafe { IsWindowVisible(h) } != 0 {
+            let mut buf = [0u16; 512];
+            let n = unsafe { GetWindowTextW(h, buf.as_mut_ptr(), buf.len() as i32) };
+            if String::from_utf16_lossy(&buf[..n.max(0) as usize]).contains(*marker) {
+                let mut p = 0u32;
+                unsafe { GetWindowThreadProcessId(h, &mut p) };
+                *out = Some(p);
+                return 0;
+            }
+        }
+        1
+    }
+    let mut state = (marker, None);
+    unsafe { EnumWindows(cb, &mut state as *mut _ as isize) };
+    state.1
 }
 
 pub fn kill_tree(pid: u32) {

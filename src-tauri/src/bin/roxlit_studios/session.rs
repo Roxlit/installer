@@ -5,7 +5,7 @@
 //! Every wait is capped; nothing here blocks forever on Studio or Rojo.
 
 use crate::win::{self, NoWindow};
-use crate::{guard, screen};
+use crate::{audio, guard, screen};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -19,6 +19,11 @@ const FIRST_PORT: u16 = 34900;
 const BUILD_CAP: Duration = Duration::from_secs(120);
 const SERVE_CAP: Duration = Duration::from_secs(30);
 const LOAD_CAP: Duration = Duration::from_secs(120);
+/// A Studio update (download + install) before a launch or in the middle of one.
+const INSTALL_CAP: Duration = Duration::from_secs(300);
+const EXIT_GRACE: Duration = Duration::from_secs(10);
+const STUDIO: &str = "RobloxStudioBeta.exe";
+const INSTALLER: &str = "RobloxStudioInstaller.exe";
 /// Playtest fps cap. The hidden desktop has no vsync, so an uncapped Studio renders at
 /// the global `FramerateCap` (240 measured, ~1.7x the GPU of a 60 fps Studio).
 const FPS_CAP: i64 = 60;
@@ -129,34 +134,92 @@ fn cap_framerate() {
     let _ = fs::write(&path, out);
 }
 
+/// While RobloxStudioInstaller runs, the Studio exe is being replaced: launching then
+/// fails with "file in use" (os error 32, seen 2026-11-04).
+fn wait_installer() -> Result<(), String> {
+    let start = Instant::now();
+    while win::running(INSTALLER) {
+        if start.elapsed() > INSTALL_CAP {
+            return Err(format!(
+                "Roblox Studio is still updating after {} s",
+                INSTALL_CAP.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    Ok(())
+}
+
 /// Launch Studio on `place` and wait until it has loaded; killed at the cap. It goes to
 /// Juan's desktop parked on the Studio display (live view), or to the hidden desktop when
 /// that display is missing or ROXLIT_STUDIO_HIDDEN=1. Returns (pid, visible).
+///
+/// When an update is out, the launched Studio starts RobloxStudioInstaller and exits; the
+/// installer then opens a new Studio on the same place, on Juan's desktop. That one is
+/// followed (parked, watched, its pid returned) instead of failing the open and leaving it
+/// unmanaged on his primary monitor (seen 2026-11-04).
 fn launch_studio(place: &Path, name: &str) -> Result<(u32, bool), String> {
+    wait_installer()?;
     let exe = studio_exe().ok_or("RobloxStudioBeta.exe not found")?;
     cap_framerate();
     let area = match std::env::var("ROXLIT_STUDIO_HIDDEN").as_deref() {
         Ok("1") => None,
         _ => screen::studio_area(),
     };
-    let visible = area.is_some();
-    let pid = win::launch(&exe, place, visible).map_err(|e| format!("launch Studio: {e}"))?;
-    let loaded = match area {
-        Some(a) => {
-            guard::watch(pid);
-            screen::park_until_loaded(pid, a, name, LOAD_CAP)
-        }
-        None => win::wait_loaded(pid, name, LOAD_CAP, false),
-    };
-    if !loaded {
+    let first =
+        win::launch(&exe, place, area.is_some()).map_err(|e| format!("launch Studio: {e}"))?;
+    let (mut pid, mut visible) = (first, area.is_some());
+    if visible {
+        guard::watch(pid);
+    }
+    let hard_cap = Instant::now() + INSTALL_CAP + LOAD_CAP;
+    let mut deadline = Instant::now() + LOAD_CAP;
+    let fail = |pid: u32, why: String| {
         guard::unwatch(pid);
         win::kill_tree(pid);
-        return Err(format!(
-            "Studio did not load {name} within {} s",
-            LOAD_CAP.as_secs()
-        ));
+        Err(why)
+    };
+    loop {
+        let wins = win::windows_of(pid, visible);
+        if let Some(a) = area {
+            for (h, _) in &wins {
+                screen::park(*h, a);
+            }
+        }
+        if wins.iter().any(|(_, t)| t.contains(name)) {
+            if let Some(a) = area {
+                screen::keep_parked(pid, a);
+            }
+            return Ok((pid, visible));
+        }
+        if win::started_at(pid).is_none() {
+            let next = win::descendant(first, STUDIO).or_else(|| win::pid_with_title(name));
+            match next {
+                Some(n) if n != pid => {
+                    guard::unwatch(pid);
+                    pid = n;
+                    visible = true;
+                    if area.is_some() {
+                        guard::watch(pid);
+                    }
+                    deadline = Instant::now() + LOAD_CAP;
+                    continue;
+                }
+                _ if win::descendant(first, INSTALLER).is_some() => {
+                    deadline = (Instant::now() + LOAD_CAP).min(hard_cap);
+                }
+                // Gone with no installer and no successor: give a relaunch a moment, then fail.
+                _ => deadline = deadline.min(Instant::now() + EXIT_GRACE),
+            }
+        }
+        if Instant::now() > deadline {
+            return fail(
+                pid,
+                format!("Studio did not load {name} within {} s", LOAD_CAP.as_secs()),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
-    Ok((pid, visible))
 }
 
 /// Wait for a child with a cap; kill it at the cap.
@@ -413,6 +476,7 @@ impl Manager {
             .remove(token)
             .ok_or_else(|| format!("no session {token}"))?;
         guard::unwatch(sess.studio_pid);
+        audio::unmute(sess.studio_pid);
         win::kill_tree(sess.studio_pid);
         win::kill_tree(sess.rojo_pid);
         self.save(&s);

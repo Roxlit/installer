@@ -19,6 +19,7 @@
 
 #![windows_subsystem = "windows"]
 
+mod audio;
 mod guard;
 mod screen;
 mod services;
@@ -200,6 +201,7 @@ fn main() {
     let mgr = Arc::new(session::Manager::new());
     let svcs = services::Services::new();
     guard::start();
+    audio::start(mgr.clone());
     // Parked Studios still grab focus at times (load, play); taken ones are Juan's.
     for s in mgr.list().iter().filter(|s| s.visible && !s.front) {
         guard::watch(s.studio_pid);
