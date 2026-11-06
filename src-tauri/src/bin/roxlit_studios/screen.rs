@@ -1,7 +1,7 @@
 //! Session Studios on Juan's desktop (viewer "View live" / "Take control"). A window can't
 //! move between desktops, so a viewed session runs a second Studio on the default desktop,
-//! parked on the Studio display (a virtual monitor, `ROXLIT_STUDIO_DISPLAY`, default
-//! DISPLAY5) where DWM renders it and PrintWindow captures the 3D view. Taking control moves
+//! parked on the Studio display (the Virtual Display Driver monitor, or
+//! `ROXLIT_STUDIO_DISPLAY`) where DWM renders it and PrintWindow captures the 3D view. Taking control moves
 //! that window to the primary monitor (instant, no reload); giving back parks it again.
 
 use crate::win;
@@ -39,8 +39,19 @@ struct MonitorInfoEx {
     device: [u16; 32],
 }
 
+#[repr(C)]
+struct DisplayDevice {
+    cb: u32,
+    name: [u16; 32],
+    string: [u16; 128],
+    flags: u32,
+    id: [u16; 128],
+    key: [u16; 128],
+}
+
 #[link(name = "user32")]
 extern "system" {
+    fn EnumDisplayDevicesW(device: *const u16, i: u32, out: *mut DisplayDevice, flags: u32) -> i32;
     fn EnumDisplayMonitors(
         hdc: *mut c_void,
         clip: *const Rect,
@@ -105,12 +116,42 @@ fn monitors() -> Vec<Monitor> {
     all
 }
 
+/// Adapter name ("Virtual Display Driver", "NVIDIA ...") behind a `\\.\DISPLAYn` device.
+fn adapter_of(device: &str) -> String {
+    let mut d = DisplayDevice {
+        cb: std::mem::size_of::<DisplayDevice>() as u32,
+        name: [0; 32],
+        string: [0; 128],
+        flags: 0,
+        id: [0; 128],
+        key: [0; 128],
+    };
+    let mut i = 0;
+    while unsafe { EnumDisplayDevicesW(std::ptr::null(), i, &mut d, 0) } != 0 {
+        let n = d.name.iter().position(|&c| c == 0).unwrap_or(32);
+        if String::from_utf16_lossy(&d.name[..n]).eq_ignore_ascii_case(device) {
+            let s = d.string.iter().position(|&c| c == 0).unwrap_or(128);
+            return String::from_utf16_lossy(&d.string[..s]);
+        }
+        i += 1;
+    }
+    String::new()
+}
+
 /// Work area of the Studio display; None when that monitor is missing (driver off).
+/// `ROXLIT_STUDIO_DISPLAY` names the device; otherwise the monitor driven by the
+/// "Virtual Display Driver" adapter. Its DISPLAYn number changes when the driver
+/// reconnects (DISPLAY5 became DISPLAY6), and other virtual adapters exist (USB
+/// Mobile Monitor), so neither a number nor "any secondary" is safe.
 pub fn studio_area() -> Option<Rect> {
-    let device = std::env::var("ROXLIT_STUDIO_DISPLAY").unwrap_or_else(|_| r"\\.\DISPLAY5".into());
+    let forced = std::env::var("ROXLIT_STUDIO_DISPLAY").ok();
     monitors()
         .into_iter()
-        .find(|m| m.device.eq_ignore_ascii_case(&device) && !m.primary)
+        .filter(|m| !m.primary)
+        .find(|m| match &forced {
+            Some(dev) => m.device.eq_ignore_ascii_case(dev),
+            None => adapter_of(&m.device).contains("Virtual Display Driver"),
+        })
         .map(|m| m.work)
 }
 
