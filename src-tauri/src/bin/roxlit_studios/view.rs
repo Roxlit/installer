@@ -202,11 +202,19 @@ h1{font-size:18px;margin:0 0 12px}
 .meta{color:var(--dim);font-size:13px;word-break:break-all}
 button{background:none;color:var(--fg);border:1px solid var(--dim);padding:6px 10px;margin:0 8px 0 0;cursor:pointer;font:inherit}
 button:hover{border-color:var(--accent)}
+#projects{display:flex;flex-direction:column;gap:6px;margin:0 0 20px}
+.proj{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;background:var(--card);padding:8px 12px}
+.proj b{min-width:140px}
+.proj .meta{flex:1;min-width:200px}
+.proj .err{color:#f87171;width:100%;font-size:13px}
+button:disabled{opacity:.5;cursor:default}
 #full{position:fixed;inset:0;background:#000;display:none;z-index:9}
 #full img{width:100%;height:100%;object-fit:contain;cursor:zoom-out}
 #full .bar{position:absolute;top:8px;right:8px}
 #full .bar button{background:#000a}
 </style></head><body>
+<h1>Projects</h1>
+<div id="projects">loading...</div>
 <h1>Session Studios</h1>
 <div id="list">loading...</div>
 <div id="full"><img alt=""><div class="bar">
@@ -236,6 +244,7 @@ addEventListener("keydown", e => { if(e.key === "Escape") unzoom(); });
 fimg.onclick = unzoom;
 async function load(){
   sessions = await (await fetch("/sessions")).json();
+  if(projects.length) drawProjects();
   const list = document.getElementById("list");
   const keep = new Set(sessions.map(x => x.token + x.state + x.visible + x.front));
   if(list.dataset.keys === [...keep].join()) return;
@@ -253,5 +262,41 @@ async function load(){
     live(i, i.dataset.token, () => Math.round(i.clientWidth * devicePixelRatio));
   });
 }
+// One Studio per project on its main checkout, for Juan's own playtests (key "juan",
+// apart from the chats' sessions). Open = build + load, then straight to his screen.
+let projects = [], busy = {}, errs = {};
+async function play(i){
+  const p = projects[i]; busy[p.path] = true; delete errs[p.path]; drawProjects();
+  try {
+    let s = sessions.find(x => x.token === p.token && x.state === "ready");
+    if(!s){
+      const r = await fetch("/open",{method:"POST",body:JSON.stringify({worktree:p.path,key:"juan"})});
+      s = await r.json();
+      if(!r.ok || s.state !== "ready") throw new Error(s.error || `open failed (${r.status})`);
+    }
+    if(!s.front){
+      const r = await fetch("/show",{method:"POST",body:JSON.stringify({token:s.token})});
+      if(!r.ok) throw new Error((await r.json()).error || r.status);
+    }
+  } catch(e){ errs[p.path] = String(e.message || e); }
+  delete busy[p.path]; load();
+}
+function drawProjects(){
+  const el = document.getElementById("projects");
+  if(!projects.length){ el.textContent = "No projects in ~/.roxlit/config.json."; return; }
+  el.innerHTML = projects.map((p, i) => {
+    const s = sessions.find(x => x.token === p.token);
+    const label = busy[p.path] ? "Opening... (build + load, up to a minute)"
+      : s && s.front ? "On your screen"
+      : s && s.state === "ready" ? "Take control" : "Open & play";
+    const off = !p.ok || busy[p.path] || (s && s.front);
+    return `<div class="proj"><b>${p.name}</b>
+      <span class="meta">${p.branch ? p.branch + " - " : ""}${p.path}${p.ok ? "" : " - no default.project.json"}</span>
+      <button ${off ? "disabled" : ""} onclick="play(${i})">${label}</button>
+      ${errs[p.path] ? `<div class="err">${errs[p.path]}</div>` : ""}</div>`;
+  }).join("");
+}
+// Config entries whose folder has no Rojo project (old WSL paths) cannot be opened.
+fetch("/projects").then(r => r.json()).then(p => { projects = p.filter(x => x.ok); drawProjects(); });
 load(); setInterval(load, 3000);
 </script></body></html>"#;

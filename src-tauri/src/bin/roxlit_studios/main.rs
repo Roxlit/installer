@@ -7,6 +7,8 @@
 //!   GET  /sessions         -> [Session]
 //!   POST /open  {"worktree":"C:/..."} -> Session (reuses a live one)
 //!   POST /close {"token":"..."}       -> {"ok":true}
+//!   GET  /projects         -> [{name,path,branch,ok,token}] from ~/.roxlit/config.json; the
+//!                             viewer's "Open & play" opens the main checkout with key "juan"
 //!   GET  /                 -> viewer page (live captures, Take control / Give back)
 //!   GET  /shot/<token>[?w=N] -> PNG of that session's Studio, at most N px wide
 //!   POST /show|/hide {"token":"..."}  -> Session, moved to the primary monitor / back
@@ -21,6 +23,7 @@
 
 mod audio;
 mod guard;
+mod recent;
 mod screen;
 mod services;
 mod session;
@@ -64,6 +67,52 @@ fn reply_raw(mut stream: TcpStream, code: u16, kind: &str, body: &[u8]) {
         body.len()
     );
     let _ = stream.write_all(body);
+}
+
+/// Session key of the Studios Juan opens from the viewer, apart from any chat's.
+const JUAN_KEY: &str = "juan";
+
+/// Projects of the Roxlit launcher config, one per path, with the branch checked out.
+fn projects() -> Value {
+    let home = dirs::home_dir().unwrap_or_default();
+    let cfg: Value = std::fs::read(home.join(".roxlit").join("config.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or(Value::Null);
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for p in cfg["projects"].as_array().into_iter().flatten() {
+        let Some(path) = p["path"].as_str() else {
+            continue;
+        };
+        if !seen.insert(path.replace('\\', "/").to_lowercase()) {
+            continue;
+        }
+        let dir = std::path::Path::new(path);
+        let branch = std::fs::read_to_string(dir.join(".git").join("HEAD"))
+            .ok()
+            .map(|h| {
+                let h = h.trim();
+                h.strip_prefix("ref: refs/heads/")
+                    .unwrap_or(&h[..h.len().min(8)])
+                    .to_string()
+            });
+        let ok = dir.join("default.project.json").exists();
+        let token = std::fs::canonicalize(dir)
+            .map(|c| {
+                let c = std::path::PathBuf::from(c.to_string_lossy().trim_start_matches(r"\\?\"));
+                session::token_for(&c, Some(JUAN_KEY))
+            })
+            .ok();
+        out.push(json!({
+            "name": p["name"].as_str().unwrap_or(path),
+            "path": path,
+            "branch": branch,
+            "ok": ok,
+            "token": token,
+        }));
+    }
+    json!(out)
 }
 
 fn handle(stream: TcpStream, mgr: &session::Manager, svcs: &Arc<services::Services>) {
@@ -118,6 +167,7 @@ fn handle(stream: TcpStream, mgr: &session::Manager, svcs: &Arc<services::Servic
             _ => reply(stream, 404, json!({"error": "no live session"})),
         },
         ("GET", "/sessions") => reply(stream, 200, json!(mgr.list())),
+        ("GET", "/projects") => reply(stream, 200, projects()),
         ("POST", "/open") => match body["worktree"].as_str() {
             Some(wt) => match mgr.open(wt, body["key"].as_str()) {
                 Ok(s) => reply(stream, 200, json!(s)),
@@ -201,6 +251,7 @@ fn main() {
     let mgr = Arc::new(session::Manager::new());
     let svcs = services::Services::new();
     guard::start();
+    recent::start();
     audio::start(mgr.clone());
     // Parked Studios still grab focus at times (load, play); taken ones are Juan's.
     for s in mgr.list().iter().filter(|s| s.visible && !s.front) {
