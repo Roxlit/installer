@@ -205,7 +205,9 @@ button:hover{border-color:var(--accent)}
 #projects{display:flex;flex-direction:column;gap:6px;margin:0 0 20px}
 .proj{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;background:var(--card);padding:8px 12px}
 .proj b{min-width:140px}
-#projects h2{font-size:15px;color:var(--dim);margin:10px 0 0}
+#projects summary{font-size:15px;color:var(--dim);cursor:pointer;padding:6px 0;user-select:none}
+#projects summary:hover{color:var(--fg)}
+#projects details .proj{margin:0 0 6px}
 .proj .meta{flex:1;min-width:200px}
 .proj .err{color:#f87171;width:100%;font-size:13px}
 button:disabled{opacity:.5;cursor:default}
@@ -214,7 +216,6 @@ button:disabled{opacity:.5;cursor:default}
 #full .bar{position:absolute;top:8px;right:8px}
 #full .bar button{background:#000a}
 </style></head><body>
-<h1>Projects</h1>
 <div id="projects">loading...</div>
 <h1>Session Studios</h1>
 <div id="list">loading...</div>
@@ -296,10 +297,20 @@ function drawProjects(){
       <button ${off ? "disabled" : ""} onclick="play(${i})">${label}</button>
       ${errs[p.path] ? `<div class="err">${errs[p.path]}</div>` : ""}</div>`;
   };
-  const rows = g => projects.map(row).filter((_, i) => (projects[i].group || "projects") === g).join("");
-  const protos = rows("prototypes");
-  el.innerHTML = rows("projects") + (protos ? `<h2>Prototypes</h2>${protos}` : "");
+  // Redrawn every few seconds, so each group's open/closed state lives in `shut`.
+  const group = (g, title) => {
+    const html = projects.map(row).filter((_, i) => (projects[i].group || "projects") === g);
+    if(!html.length) return "";
+    return `<details data-g="${g}" ${shut[g] ? "" : "open"}><summary>${title} (${html.length})</summary>${html.join("")}</details>`;
+  };
+  el.innerHTML = group("projects", "Projects") + group("prototypes", "Prototypes");
+  el.querySelectorAll("details").forEach(d => d.ontoggle = () => {
+    shut[d.dataset.g] = !d.open;
+    try { localStorage.setItem("shut", JSON.stringify(shut)); } catch(e){}
+  });
 }
+let shut = {};
+try { shut = JSON.parse(localStorage.getItem("shut")) || {}; } catch(e){}
 // Config entries whose folder has no Rojo project (old WSL paths) cannot be opened.
 fetch("/projects").then(r => r.json()).then(p => { projects = p.filter(x => x.ok); drawProjects(); });
 load(); setInterval(load, 3000);
