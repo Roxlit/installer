@@ -205,6 +205,7 @@ button:hover{border-color:var(--accent)}
 #projects{display:flex;flex-direction:column;gap:6px;margin:0 0 20px}
 .proj{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;background:var(--card);padding:8px 12px}
 .proj b{min-width:140px}
+#projects h2{font-size:15px;color:var(--dim);margin:10px 0 0}
 .proj .meta{flex:1;min-width:200px}
 .proj .err{color:#f87171;width:100%;font-size:13px}
 button:disabled{opacity:.5;cursor:default}
@@ -283,8 +284,8 @@ async function play(i){
 }
 function drawProjects(){
   const el = document.getElementById("projects");
-  if(!projects.length){ el.textContent = "No projects in ~/.roxlit/config.json."; return; }
-  el.innerHTML = projects.map((p, i) => {
+  if(!projects.length){ el.textContent = "No Rojo projects in ~/RobloxProjects."; return; }
+  const row = (p, i) => {
     const s = sessions.find(x => x.token === p.token);
     const label = busy[p.path] ? "Opening... (build + load, up to a minute)"
       : s && s.front ? "On your screen"
@@ -294,7 +295,10 @@ function drawProjects(){
       <span class="meta">${p.branch ? p.branch + " - " : ""}${p.path}${p.ok ? "" : " - no default.project.json"}</span>
       <button ${off ? "disabled" : ""} onclick="play(${i})">${label}</button>
       ${errs[p.path] ? `<div class="err">${errs[p.path]}</div>` : ""}</div>`;
-  }).join("");
+  };
+  const rows = g => projects.map(row).filter((_, i) => (projects[i].group || "projects") === g).join("");
+  const protos = rows("prototypes");
+  el.innerHTML = rows("projects") + (protos ? `<h2>Prototypes</h2>${protos}` : "");
 }
 // Config entries whose folder has no Rojo project (old WSL paths) cannot be opened.
 fetch("/projects").then(r => r.json()).then(p => { projects = p.filter(x => x.ok); drawProjects(); });

@@ -72,22 +72,57 @@ fn reply_raw(mut stream: TcpStream, code: u16, kind: &str, body: &[u8]) {
 /// Session key of the Studios Juan opens from the viewer, apart from any chat's.
 const JUAN_KEY: &str = "juan";
 
-/// Projects of the Roxlit launcher config, one per path, with the branch checked out.
+/// Subfolders of `parent` that hold a Rojo project, sorted by name.
+fn rojo_dirs(parent: &std::path::Path) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir() && p.join("default.project.json").exists())
+        .filter_map(|p| {
+            let name = p.file_name()?.to_string_lossy().into_owned();
+            Some((name, p.to_string_lossy().into_owned()))
+        })
+        .collect();
+    out.sort_by_key(|(n, _)| n.to_lowercase());
+    out
+}
+
+/// Every Rojo project in ~/RobloxProjects ("projects") and ~/RobloxProjects/Idea
+/// ("prototypes"), plus launcher-config entries living elsewhere; one per path, with
+/// the branch checked out. A new folder shows up without registering it anywhere.
 fn projects() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
+    let root = home.join("RobloxProjects");
     let cfg: Value = std::fs::read(home.join(".roxlit").join("config.json"))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or(Value::Null);
+    let mut found: Vec<(String, String, &str)> = Vec::new();
+    found.extend(
+        rojo_dirs(&root)
+            .into_iter()
+            .map(|(n, p)| (n, p, "projects")),
+    );
+    found.extend(
+        rojo_dirs(&root.join("Idea"))
+            .into_iter()
+            .map(|(n, p)| (n, p, "prototypes")),
+    );
+    for p in cfg["projects"].as_array().into_iter().flatten() {
+        if let Some(path) = p["path"].as_str() {
+            let name = p["name"].as_str().unwrap_or(path).to_string();
+            found.push((name, path.to_string(), "projects"));
+        }
+    }
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for p in cfg["projects"].as_array().into_iter().flatten() {
-        let Some(path) = p["path"].as_str() else {
-            continue;
-        };
+    for (name, path, group) in &found {
         if !seen.insert(path.replace('\\', "/").to_lowercase()) {
             continue;
         }
+        let path = path.as_str();
         let dir = std::path::Path::new(path);
         let branch = std::fs::read_to_string(dir.join(".git").join("HEAD"))
             .ok()
@@ -105,8 +140,9 @@ fn projects() -> Value {
             })
             .ok();
         out.push(json!({
-            "name": p["name"].as_str().unwrap_or(path),
+            "name": name,
             "path": path,
+            "group": group,
             "branch": branch,
             "ok": ok,
             "token": token,
