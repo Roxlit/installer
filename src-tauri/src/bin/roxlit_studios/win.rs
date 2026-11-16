@@ -347,3 +347,57 @@ impl NoWindow for std::process::Command {
         self.creation_flags(0x0800_0000)
     }
 }
+
+#[link(name = "version")]
+extern "system" {
+    fn GetFileVersionInfoSizeW(file: *const u16, handle: *mut u32) -> u32;
+    fn GetFileVersionInfoW(file: *const u16, handle: u32, len: u32, data: *mut c_void) -> i32;
+    fn VerQueryValueW(
+        block: *const c_void,
+        sub: *const u16,
+        buf: *mut *mut c_void,
+        len: *mut u32,
+    ) -> i32;
+}
+
+/// Release order of a Roblox exe: (major, minor, build) from its ProductVersion string
+/// ("0, 747, 0, 7471481"). The fixed VS_FIXEDFILEINFO is useless here: Roblox's build
+/// number overflows its 16-bit fields, and a hotfix build carries 649 in the third one.
+pub fn file_version(path: &Path) -> Option<(u64, u64, u64)> {
+    let file: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        let mut h = 0u32;
+        let size = GetFileVersionInfoSizeW(file.as_ptr(), &mut h);
+        if size == 0 {
+            return None;
+        }
+        let mut data = vec![0u8; size as usize];
+        if GetFileVersionInfoW(file.as_ptr(), 0, size, data.as_mut_ptr().cast()) == 0 {
+            return None;
+        }
+        let mut ptr: *mut c_void = std::ptr::null_mut();
+        let mut len = 0u32;
+        let tr_key = wide(r"\VarFileInfo\Translation");
+        if VerQueryValueW(data.as_ptr().cast(), tr_key.as_ptr(), &mut ptr, &mut len) == 0 || len < 4
+        {
+            return None;
+        }
+        let tr = ptr as *const u16;
+        let key = wide(&format!(
+            r"\StringFileInfo\{:04x}{:04x}\ProductVersion",
+            *tr,
+            *tr.add(1)
+        ));
+        if VerQueryValueW(data.as_ptr().cast(), key.as_ptr(), &mut ptr, &mut len) == 0 || len == 0 {
+            return None;
+        }
+        let text =
+            String::from_utf16_lossy(std::slice::from_raw_parts(ptr as *const u16, len as usize));
+        let parts: Vec<u64> = text
+            .trim_end_matches('\0')
+            .split([',', '.'])
+            .filter_map(|x| x.trim().parse().ok())
+            .collect();
+        (parts.len() == 4).then(|| (parts[0], parts[1], parts[3]))
+    }
+}

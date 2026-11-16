@@ -95,7 +95,10 @@ fn rojo_exe() -> PathBuf {
     }
 }
 
-/// Newest installed RobloxStudioBeta.exe.
+/// Newest installed RobloxStudioBeta.exe, by the build number in its file version.
+/// Not by mtime: on 2026-11-16 an older build (7471474) had the newer mtime than the
+/// current one (7471481), so every session Studio started outdated and showed
+/// "Restart to update" forever, since sessions never go through the bootstrapper.
 fn studio_exe() -> Option<PathBuf> {
     let versions = dirs::data_local_dir()?.join("Roblox").join("Versions");
     fs::read_dir(versions)
@@ -103,7 +106,12 @@ fn studio_exe() -> Option<PathBuf> {
         .filter_map(|e| e.ok())
         .map(|e| e.path().join("RobloxStudioBeta.exe"))
         .filter(|p| p.exists())
-        .max_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok())
+        .max_by_key(|p| {
+            (
+                win::file_version(p).unwrap_or_default(),
+                fs::metadata(p).and_then(|m| m.modified()).ok(),
+            )
+        })
 }
 
 /// Lower Studio's global `FramerateCap` to FPS_CAP before a launch. The setting is shared
