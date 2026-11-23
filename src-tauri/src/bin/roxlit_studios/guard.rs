@@ -94,7 +94,7 @@ pub fn unwatch(pid: u32) {
     STATE.lock().unwrap().pids.retain(|p| *p != pid);
 }
 
-fn log(line: &str) {
+pub(crate) fn log(line: &str) {
     let path = dirs::home_dir()
         .unwrap_or_default()
         .join(".roxlit")
@@ -200,14 +200,20 @@ extern "system" fn on_foreground(_: *mut c_void, _: u32, fg: Hwnd, _: i32, _: i3
         }
         std::thread::sleep(Duration::from_millis(50));
     };
-    log(&format!("studio {pid} took focus; returned ok={ok} tries={tries}"));
+    log(&format!(
+        "studio {pid} took focus; returned ok={ok} tries={tries}"
+    ));
 }
 
 /// Runs the hook on its own thread with a message loop (out-of-context WinEvents are
 /// delivered through it).
 pub fn start() {
     std::thread::spawn(|| unsafe {
-        STATE.lock().unwrap().prev.push(GetForegroundWindow() as isize);
+        STATE
+            .lock()
+            .unwrap()
+            .prev
+            .push(GetForegroundWindow() as isize);
         SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
             EVENT_SYSTEM_FOREGROUND,

@@ -5,7 +5,9 @@
 //! that window to the primary monitor (instant, no reload); giving back parks it again.
 
 use crate::win;
+use std::collections::HashSet;
 use std::ffi::c_void;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 type Hwnd = *mut c_void;
@@ -77,6 +79,26 @@ const MONITORINFOF_PRIMARY: u32 = 1;
 const SW_SHOWMAXIMIZED: u32 = 3;
 const SW_SHOWNOACTIVATE: u32 = 4;
 const RELAYOUT: Duration = Duration::from_secs(20);
+
+/// Studios Juan took control of. The relayout thread of `keep_parked` checks it: without
+/// it, "Take control" in the first 20 s after load (always the case for "Open & play")
+/// was undone within 50 ms by that thread parking the window again, so it took several
+/// Take / Give back rounds to stick.
+static FRONT: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
+
+fn is_front(pid: u32) -> bool {
+    FRONT.lock().unwrap().as_ref().is_some_and(|f| f.contains(&pid))
+}
+
+fn set_front(pid: u32, front: bool) {
+    let mut f = FRONT.lock().unwrap();
+    let set = f.get_or_insert_with(HashSet::new);
+    if front {
+        set.insert(pid);
+    } else {
+        set.remove(&pid);
+    }
+}
 
 struct Monitor {
     device: String,
@@ -182,25 +204,30 @@ pub fn park(h: Hwnd, area: Rect) -> bool {
     true
 }
 
-/// Studio relayouts for a while after load, so a thread keeps parking its windows for
-/// RELAYOUT more without holding up the caller.
+/// Studio relayouts for a while after load, so a thread keeps its windows where they
+/// belong for RELAYOUT more without holding up the caller: parked, or maximized on the
+/// primary monitor once Juan took control (Studio's own relayout can move it back too).
 pub fn keep_parked(pid: u32, area: Rect) {
     std::thread::spawn(move || {
         let t = Instant::now();
         while t.elapsed() < RELAYOUT {
-            for (h, _) in win::windows_of(pid, true) {
-                park(h, area);
+            if is_front(pid) {
+                if let (Some(h), Some(p)) = (win::main_window_on(pid, true), primary_area()) {
+                    if !inside(h, p) {
+                        place_front(h, p);
+                    }
+                }
+            } else {
+                for (h, _) in win::windows_of(pid, true) {
+                    park(h, area);
+                }
             }
             std::thread::sleep(Duration::from_millis(50));
         }
     });
 }
 
-/// "Take control": maximize the Studio on the primary monitor and bring it to the front.
-/// Juan asked for it (viewer button), so taking the foreground is wanted here.
-pub fn bring_front(pid: u32) -> Result<(), String> {
-    let h = win::main_window_on(pid, true).ok_or("Studio has no window")?;
-    let area = primary_area().ok_or("no primary monitor")?;
+fn place_front(h: Hwnd, area: Rect) {
     let mut wp = WindowPlacement {
         length: std::mem::size_of::<WindowPlacement>() as u32,
         ..Default::default()
@@ -210,19 +237,45 @@ pub fn bring_front(pid: u32) -> Result<(), String> {
         wp.rc_normal = area;
         wp.show_cmd = SW_SHOWMAXIMIZED;
         SetWindowPlacement(h, &wp);
-        // The browser holds the foreground; joining its input queue lets us pass it on.
-        let fg_tid = GetWindowThreadProcessId(GetForegroundWindow(), std::ptr::null_mut());
-        let me = GetCurrentThreadId();
-        AttachThreadInput(me, fg_tid, 1);
-        SetForegroundWindow(h);
-        AttachThreadInput(me, fg_tid, 0);
     }
+}
+
+/// "Take control": maximize the Studio on the primary monitor and bring it to the front.
+/// Juan asked for it (viewer button), so taking the foreground is wanted here.
+pub fn bring_front(pid: u32) -> Result<(), String> {
+    let h = win::main_window_on(pid, true).ok_or("Studio has no window")?;
+    let area = primary_area().ok_or("no primary monitor")?;
+    set_front(pid, true);
+    place_front(h, area);
+    // The browser holds the foreground; joining its input queue lets us pass it on. It
+    // can fail while Studio is mid-relayout, so retry briefly, and log the outcome.
+    let me = unsafe { GetCurrentThreadId() };
+    let mut tries = 0;
+    let ok = loop {
+        tries += 1;
+        let ok = unsafe {
+            let fg_tid = GetWindowThreadProcessId(GetForegroundWindow(), std::ptr::null_mut());
+            AttachThreadInput(me, fg_tid, 1);
+            SetForegroundWindow(h);
+            AttachThreadInput(me, fg_tid, 0);
+            GetForegroundWindow() == h
+        };
+        if ok || tries == 5 {
+            break ok;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    crate::guard::log(&format!(
+        "take control {pid}: on primary={} focused={ok} tries={tries}",
+        inside(h, area)
+    ));
     Ok(())
 }
 
 /// "Give back": park the Studio on the Studio display again, without activating it.
 pub fn send_back(pid: u32) -> Result<(), String> {
     let area = studio_area().ok_or("Studio display not found")?;
+    set_front(pid, false);
     for (h, _) in win::windows_of(pid, true) {
         park(h, area);
     }
