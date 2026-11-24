@@ -27,6 +27,8 @@ mod recent;
 mod screen;
 mod services;
 mod session;
+#[cfg(test)]
+mod shotbench;
 mod view;
 mod win;
 
@@ -234,7 +236,7 @@ fn handle(stream: TcpStream, mgr: &session::Manager, svcs: &Arc<services::Servic
                 .get(token)
                 .and_then(|s| view::shot(s.studio_pid, s.visible, width))
             {
-                Some(png) => reply_raw(stream, 200, "image/png", &png),
+                Some(png) => reply_raw(stream, 200, "image/png", &png[..]),
                 None => reply(stream, 404, json!({"error": "no window to capture"})),
             }
         }

@@ -6,7 +6,10 @@
 
 use crate::session::{Manager, Session};
 use crate::{guard, screen, win};
+use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
 type Hwnd = *mut c_void;
 type Hdc = *mut c_void;
@@ -73,9 +76,97 @@ const PW_RENDERFULLCONTENT: u32 = 2;
 const HALFTONE: i32 = 4;
 const SRCCOPY: u32 = 0x00CC_0020;
 const MAX_W: i32 = 2560;
+/// A frame this fresh is served again instead of capturing a new one.
+const REUSE: Duration = Duration::from_millis(50);
+/// Captures running at once across every session and viewer tab. Each one holds a
+/// full-size BGRA buffer plus its PNG (~25 MB at 2560 px): unbounded, a few open tabs
+/// pushed the heap to ~2 GB, which Windows never got back.
+const MAX_CAPTURES: usize = 2;
+const CAP_WAIT: Duration = Duration::from_secs(2);
+
+type Frame = Option<Arc<Vec<u8>>>;
+
+/// Last capture per (pid, width, visible), and whether one is running now. The frame is
+/// held weakly: it lives only while some request is still sending it, so an idle
+/// manager keeps no frames, and a frame nobody holds anymore is captured again.
+#[derive(Default)]
+struct Slot {
+    busy: bool,
+    last: Option<(Instant, Option<Weak<Vec<u8>>>)>,
+}
+
+impl Slot {
+    /// The last result if it finished after `asked` or is fresh enough to look live:
+    /// Some(None) for a window that could not be captured.
+    fn reuse(&self, asked: Instant) -> Option<Frame> {
+        let (at, frame) = self.last.as_ref()?;
+        if *at < asked && at.elapsed() >= REUSE {
+            return None;
+        }
+        match frame {
+            None => Some(None),
+            Some(w) => w.upgrade().map(Some),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Shots {
+    slots: HashMap<(u32, i32, bool), Slot>,
+    running: usize,
+}
+
+fn shots() -> &'static (Mutex<Shots>, Condvar) {
+    static S: OnceLock<(Mutex<Shots>, Condvar)> = OnceLock::new();
+    S.get_or_init(Default::default)
+}
 
 /// PNG of the main window of `pid`, at most `max_w` wide. None when it has no window.
-pub fn shot(pid: u32, visible: bool, max_w: i32) -> Option<Vec<u8>> {
+/// Requests for the same Studio and width share one capture (a caller that arrives
+/// while it runs gets its frame), and at most MAX_CAPTURES run at once.
+pub fn shot(pid: u32, visible: bool, max_w: i32) -> Frame {
+    let max_w = max_w.clamp(160, MAX_W);
+    let key = (pid, max_w, visible);
+    let (lock, cv) = shots();
+    let mut s = lock.lock().unwrap();
+    let asked = Instant::now();
+    loop {
+        let slot = s.slots.entry(key).or_default();
+        if let Some(frame) = slot.reuse(asked) {
+            return frame;
+        }
+        // Past CAP_WAIT the cap yields: captures stuck on hung Studios (PrintWindow
+        // waits on them) must not freeze every other session's preview.
+        let waited = asked.elapsed();
+        if !slot.busy && (s.running < MAX_CAPTURES || waited >= CAP_WAIT) {
+            break;
+        }
+        let left = CAP_WAIT
+            .saturating_sub(waited)
+            .max(Duration::from_millis(10));
+        s = cv.wait_timeout(s, left).unwrap().0;
+    }
+    s.slots.get_mut(&key).unwrap().busy = true;
+    s.running += 1;
+    // Slots of widths nobody asks for anymore (window resized, tab closed).
+    s.slots
+        .retain(|_, v| v.busy || v.last.as_ref().is_some_and(|(at, _)| at.elapsed() < REUSE));
+    drop(s);
+
+    let frame = capture(pid, visible, max_w).map(Arc::new);
+
+    let mut s = lock.lock().unwrap();
+    s.running -= 1;
+    let slot = s.slots.entry(key).or_default();
+    slot.busy = false;
+    slot.last = Some((Instant::now(), frame.as_ref().map(Arc::downgrade)));
+    drop(s);
+    cv.notify_all();
+    frame
+}
+
+/// One capture: PrintWindow of the full window, scaled to at most `max_w`, as PNG.
+fn capture(pid: u32, visible: bool, max_w: i32) -> Option<Vec<u8>> {
     // SetThreadDesktop needs a thread without windows, so capture on a fresh one.
     std::thread::spawn(move || unsafe {
         if !visible {
@@ -88,7 +179,6 @@ pub fn shot(pid: u32, visible: bool, max_w: i32) -> Option<Vec<u8>> {
         if w <= 0 || h <= 0 {
             return None;
         }
-        let max_w = max_w.clamp(160, MAX_W);
         let (tw, th) = if w > max_w {
             (max_w, h * max_w / w)
         } else {
@@ -137,7 +227,7 @@ pub fn shot(pid: u32, visible: bool, max_w: i32) -> Option<Vec<u8>> {
         if !ok || lines <= 0 {
             return None;
         }
-        encode_png(tw as u32, th as u32, &px)
+        encode_png(tw as u32, th as u32, px)
     })
     .join()
     .ok()
@@ -145,16 +235,21 @@ pub fn shot(pid: u32, visible: bool, max_w: i32) -> Option<Vec<u8>> {
 }
 
 /// GDI's BGRA to an RGB PNG with fast compression, so frames are cheap enough to poll.
-fn encode_png(w: u32, h: u32, bgra: &[u8]) -> Option<Vec<u8>> {
-    let rgb: Vec<u8> = bgra
-        .chunks_exact(4)
-        .flat_map(|p| [p[2], p[1], p[0]])
-        .collect();
-    let mut out = Vec::new();
+/// Converted in place (no second full-size copy) and into a pre-sized output.
+fn encode_png(w: u32, h: u32, mut px: Vec<u8>) -> Option<Vec<u8>> {
+    let n = px.len() / 4;
+    for i in 0..n {
+        let (b, g, r) = (px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+        px[i * 3] = r;
+        px[i * 3 + 1] = g;
+        px[i * 3 + 2] = b;
+    }
+    px.truncate(n * 3);
+    let mut out = Vec::with_capacity(n);
     let mut enc = png::Encoder::new(&mut out, w, h);
     enc.set_color(png::ColorType::Rgb);
     enc.set_compression(png::Compression::Fast);
-    enc.write_header().ok()?.write_image_data(&rgb).ok()?;
+    enc.write_header().ok()?.write_image_data(&px).ok()?;
     Some(out)
 }
 
