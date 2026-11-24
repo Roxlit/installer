@@ -1231,4 +1231,26 @@ mod tests {
         let req = b"GET /ws HTTP/1.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
         assert_eq!(close_head(req).unwrap(), req.to_vec());
     }
+
+    /// The idle background loop (reload + reap), 1000 times (4 h of the live 15 s loop),
+    /// on a copy of the live registry in a temp dir so live state is never written.
+    #[test]
+    #[ignore]
+    fn bench_services_tick() {
+        use super::*;
+        let dir = std::env::temp_dir().join("roxlit-services-bench");
+        let _ = fs::create_dir_all(&dir);
+        let file = dir.join("services.json");
+        let _ = fs::copy(home().join("services.json"), &file);
+        let me = Arc::new(Services {
+            map: Mutex::new(HashMap::new()),
+            file,
+            dir,
+            loaded: Mutex::new(None),
+        });
+        crate::win::leak_bench("services reload+reap", 1000, || {
+            me.reload();
+            me.reap();
+        });
+    }
 }

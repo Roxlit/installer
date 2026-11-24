@@ -401,3 +401,62 @@ pub fn file_version(path: &Path) -> Option<(u64, u64, u64)> {
         (parts.len() == 4).then(|| (parts[0], parts[1], parts[3]))
     }
 }
+
+#[cfg(test)]
+#[repr(C)]
+#[derive(Default)]
+struct MemCounters {
+    cb: u32,
+    faults: u32,
+    peak_ws: usize,
+    ws: usize,
+    peak_paged: usize,
+    paged: usize,
+    peak_nonpaged: usize,
+    nonpaged: usize,
+    pagefile: usize,
+    peak_pagefile: usize,
+    private: usize,
+}
+
+#[cfg(test)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetCurrentProcess() -> Handle;
+    fn K32GetProcessMemoryInfo(h: Handle, out: *mut MemCounters, cb: u32) -> i32;
+}
+
+/// Private bytes of this process.
+#[cfg(test)]
+pub fn private_bytes() -> usize {
+    let mut m = MemCounters {
+        cb: std::mem::size_of::<MemCounters>() as u32,
+        ..Default::default()
+    };
+    unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut m, m.cb) };
+    m.private
+}
+
+/// Leak bench: run `f` `n` times after a warm-up, print private bytes before/after,
+/// return the growth in MB.
+#[cfg(test)]
+pub fn leak_bench(label: &str, n: usize, mut f: impl FnMut()) -> f64 {
+    for _ in 0..20 {
+        f();
+    }
+    let a = private_bytes();
+    let t = std::time::Instant::now();
+    for _ in 0..n {
+        f();
+    }
+    let b = private_bytes();
+    let mb = |x: usize| x as f64 / 1048576.0;
+    let d = mb(b) - mb(a);
+    println!(
+        "BENCH {label}: {n} iters in {:.1}s, private {:.1} -> {:.1} MB ({d:+.2} MB)",
+        t.elapsed().as_secs_f64(),
+        mb(a),
+        mb(b)
+    );
+    d
+}
