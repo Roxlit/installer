@@ -9,6 +9,10 @@ use crate::util::expand_tilde;
 pub struct ProjectEntry {
     pub name: String,
     pub path: String,
+    /// Legacy: the AI tool chosen when the project was created. The user-level
+    /// `RoxlitConfig::ai_tool` is the source of truth; this is kept only so old
+    /// configs parse and can be migrated.
+    #[serde(default)]
     pub ai_tool: String,
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -29,6 +33,54 @@ pub struct RoxlitConfig {
     pub dismissed_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_delay_days: Option<u32>,
+    /// User-level AI tool / editor preference, shared by every project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_tool: Option<String>,
+}
+
+impl RoxlitConfig {
+    fn empty() -> Self {
+        RoxlitConfig {
+            version: 1,
+            projects: vec![],
+            last_active_project: None,
+            last_update_check: None,
+            dismissed_version: None,
+            update_delay_days: None,
+            ai_tool: None,
+        }
+    }
+
+    /// Migrates configs written before the AI tool became a user setting:
+    /// adopt the per-project value of the last active project (or the first one).
+    fn migrate(&mut self) {
+        if self.ai_tool.as_deref().map_or(false, |t| !t.is_empty()) {
+            return;
+        }
+        let legacy = self
+            .projects
+            .iter()
+            .find(|p| Some(&p.path) == self.last_active_project.as_ref())
+            .or_else(|| self.projects.first())
+            .map(|p| p.ai_tool.clone())
+            .filter(|t| !t.is_empty());
+        self.ai_tool = legacy;
+    }
+}
+
+/// Returns the user's AI tool preference, defaulting to "claude".
+pub fn user_ai_tool() -> String {
+    read_config()
+        .and_then(|c| c.ai_tool)
+        .unwrap_or_else(|| "claude".to_string())
+}
+
+fn read_config() -> Option<RoxlitConfig> {
+    let path = config_path()?;
+    let content = std::fs::read_to_string(&path).ok()?;
+    let mut config: RoxlitConfig = serde_json::from_str(&content).ok()?;
+    config.migrate();
+    Some(config)
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -37,9 +89,7 @@ fn config_path() -> Option<PathBuf> {
 
 #[tauri::command]
 pub async fn load_config() -> Option<RoxlitConfig> {
-    let path = config_path()?;
-    let content = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&content).ok()
+    read_config()
 }
 
 #[tauri::command]
@@ -47,14 +97,7 @@ pub async fn save_project(project: ProjectEntry) -> Result<RoxlitConfig> {
     let path = config_path()
         .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
 
-    let mut config = load_config().await.unwrap_or(RoxlitConfig {
-        version: 1,
-        projects: vec![],
-        last_active_project: None,
-        last_update_check: None,
-        dismissed_version: None,
-        update_delay_days: None,
-    });
+    let mut config = load_config().await.unwrap_or_else(RoxlitConfig::empty);
 
     // Expand tilde so paths are always absolute
     let mut project = project;
@@ -73,6 +116,10 @@ pub async fn save_project(project: ProjectEntry) -> Result<RoxlitConfig> {
         }
     } else {
         config.projects.push(project.clone());
+    }
+    // The tool picked when creating a project becomes the user's preference
+    if !project.ai_tool.is_empty() {
+        config.ai_tool = Some(project.ai_tool.clone());
     }
     config.last_active_project = Some(project.path);
 
@@ -95,14 +142,7 @@ pub async fn save_update_state(
     let path = config_path()
         .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
 
-    let mut config = load_config().await.unwrap_or(RoxlitConfig {
-        version: 1,
-        projects: vec![],
-        last_active_project: None,
-        last_update_check: None,
-        dismissed_version: None,
-        update_delay_days: None,
-    });
+    let mut config = load_config().await.unwrap_or_else(RoxlitConfig::empty);
 
     if last_update_check.is_some() {
         config.last_update_check = last_update_check;
@@ -126,16 +166,28 @@ pub async fn save_settings(update_delay_days: u32) -> Result<()> {
     let path = config_path()
         .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
 
-    let mut config = load_config().await.unwrap_or(RoxlitConfig {
-        version: 1,
-        projects: vec![],
-        last_active_project: None,
-        last_update_check: None,
-        dismissed_version: None,
-        update_delay_days: None,
-    });
+    let mut config = load_config().await.unwrap_or_else(RoxlitConfig::empty);
 
     config.update_delay_days = Some(update_delay_days);
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| InstallerError::Custom(e.to_string()))?;
+    std::fs::write(&path, json)?;
+
+    Ok(())
+}
+
+/// Persists the user-level AI tool / editor preference.
+#[tauri::command]
+pub async fn set_ai_tool(ai_tool: String) -> Result<()> {
+    let path = config_path()
+        .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
+
+    let mut config = load_config().await.unwrap_or_else(RoxlitConfig::empty);
+    config.ai_tool = Some(ai_tool);
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -236,14 +288,7 @@ pub async fn set_active_project(path: String) -> Result<()> {
     let config_path = config_path()
         .ok_or_else(|| InstallerError::Custom("Cannot find home directory".into()))?;
 
-    let mut config = load_config().await.unwrap_or(RoxlitConfig {
-        version: 1,
-        projects: vec![],
-        last_active_project: None,
-        last_update_check: None,
-        dismissed_version: None,
-        update_delay_days: None,
-    });
+    let mut config = load_config().await.unwrap_or_else(RoxlitConfig::empty);
 
     config.last_active_project = Some(expand_tilde(&path));
 

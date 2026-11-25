@@ -116,6 +116,7 @@ export type AppMode = "loading" | "installer" | "launcher" | "recovery";
 export interface ProjectEntry {
   name: string;
   path: string;
+  /** Legacy per-project tool; the user-level RoxlitConfig.aiTool wins */
   aiTool: string;
   createdAt: string;
   placeId?: number | null;
@@ -129,6 +130,8 @@ export interface RoxlitConfig {
   lastUpdateCheck?: string | null;
   dismissedVersion?: string | null;
   updateDelayDays?: number | null;
+  /** User-level AI tool / editor preference (shared by all projects) */
+  aiTool?: string | null;
 }
 
 export interface DiscoveredProject {

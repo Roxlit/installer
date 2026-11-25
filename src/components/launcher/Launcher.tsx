@@ -51,6 +51,7 @@ interface LauncherProps {
   onUpdateDelayChange: (days: number) => void;
   allProjects: ProjectEntry[];
   onProjectSwitch: (project: ProjectEntry) => void;
+  onAiToolChange: (aiTool: string) => void;
 }
 
 function StatusDot({ status }: { status: RojoStatus }) {
@@ -115,6 +116,7 @@ export function Launcher({
   onUpdateDelayChange,
   allProjects,
   onProjectSwitch,
+  onAiToolChange,
 }: LauncherProps) {
   const [editorLoading, setEditorLoading] = useState(false);
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
@@ -191,7 +193,18 @@ export function Launcher({
             <p className="mt-0.5 font-mono text-xs text-zinc-500">
               {projectPath}
             </p>
-            <p className="mt-0.5 text-xs text-zinc-500">{toolName}</p>
+            <select
+              value={aiTool}
+              onChange={(e) => onAiToolChange(e.target.value)}
+              title="AI tool / editor (applies to all projects)"
+              className="-ml-1 mt-0.5 cursor-pointer rounded bg-transparent px-1 text-xs text-zinc-500 outline-none transition-colors hover:text-zinc-300 focus:text-zinc-300"
+            >
+              {TOOL_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id} className="bg-zinc-900">
+                  {opt.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Project dropdown */}
@@ -199,8 +212,6 @@ export function Launcher({
             <div className="absolute left-0 top-full z-10 mt-1 w-72 rounded-lg border border-white/10 bg-zinc-900 py-1 shadow-xl">
               {allProjects.map((project) => {
                 const isActive = project.path === projectPath;
-                const projToolName =
-                  TOOL_OPTIONS.find((t) => t.id === project.aiTool)?.name ?? project.aiTool;
                 return (
                   <button
                     key={project.path}
@@ -226,7 +237,7 @@ export function Launcher({
                         {project.name}
                       </div>
                       <div className="truncate text-[11px] text-zinc-500">
-                        {project.path} · {projToolName}
+                        {project.path}
                       </div>
                     </div>
                   </button>

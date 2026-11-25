@@ -177,6 +177,17 @@ pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
     Ok(())
 }
 
+/// Relative path of the context file each AI tool reads.
+pub fn context_file_name(ai_tool: &str) -> &'static str {
+    match ai_tool {
+        "claude" => "CLAUDE.md",
+        "cursor" => ".cursorrules",
+        "windsurf" => ".windsurfrules",
+        "vscode" => ".github/copilot-instructions.md",
+        _ => "AI-CONTEXT.md",
+    }
+}
+
 /// Returns a human-readable name for the AI tool ID.
 pub fn tool_display_name(ai_tool: &str) -> &str {
     match ai_tool {

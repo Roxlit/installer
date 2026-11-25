@@ -200,6 +200,7 @@ pub fn run() {
             commands::config::scan_for_projects,
             commands::config::check_project_exists,
             commands::config::set_active_project,
+            commands::config::set_ai_tool,
             commands::update::check_for_update,
             commands::rojo::start_rojo,
             commands::rojo::stop_rojo,

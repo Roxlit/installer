@@ -9,6 +9,7 @@ const RESTART_DELAY_MS = 2_000;
 
 interface LauncherState {
   project: ProjectEntry | null;
+  aiTool: string;
   rojoStatus: RojoStatus;
   rojoPort: number | null;
   logs: string[];
@@ -17,6 +18,7 @@ interface LauncherState {
 
 type Action =
   | { type: "SET_PROJECT"; project: ProjectEntry }
+  | { type: "SET_AI_TOOL"; aiTool: string }
   | { type: "ROJO_STARTING"; keepLogs?: boolean }
   | { type: "ROJO_STARTED"; port: number }
   | { type: "ROJO_OUTPUT"; line: string; stream: string }
@@ -26,6 +28,7 @@ type Action =
 
 const initialState: LauncherState = {
   project: null,
+  aiTool: "claude",
   rojoStatus: "stopped",
   rojoPort: null,
   logs: [],
@@ -36,6 +39,8 @@ function reducer(state: LauncherState, action: Action): LauncherState {
   switch (action.type) {
     case "SET_PROJECT":
       return { ...state, project: action.project };
+    case "SET_AI_TOOL":
+      return { ...state, aiTool: action.aiTool };
     case "ROJO_STARTING":
       return {
         ...state,
@@ -70,6 +75,7 @@ export function useLauncher() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const rojoChannelRef = useRef<Channel<RojoEvent> | null>(null);
   const projectRef = useRef<ProjectEntry | null>(null);
+  const aiToolRef = useRef<string>(initialState.aiTool);
   const stopRequestedRef = useRef(false);
   const restartCountRef = useRef(0);
   const lastCrashTimeRef = useRef(0);
@@ -79,6 +85,12 @@ export function useLauncher() {
   const setProject = useCallback((project: ProjectEntry) => {
     projectRef.current = project;
     dispatch({ type: "SET_PROJECT", project });
+  }, []);
+
+  // The editor is a user-level preference, independent of the active project
+  const setAiTool = useCallback((aiTool: string) => {
+    aiToolRef.current = aiTool;
+    dispatch({ type: "SET_AI_TOOL", aiTool });
   }, []);
 
   // --- Rojo event handler ---
@@ -230,7 +242,7 @@ export function useLauncher() {
     setTimeout(async () => {
       try {
         await invoke("open_in_editor", {
-          editor: project.aiTool,
+          editor: aiToolRef.current,
           path: project.path,
         });
       } catch {
@@ -244,7 +256,7 @@ export function useLauncher() {
     if (!project) return;
     try {
       await invoke("open_in_editor", {
-        editor: project.aiTool,
+        editor: aiToolRef.current,
         path: project.path,
       });
     } catch {
@@ -259,6 +271,7 @@ export function useLauncher() {
   return {
     ...state,
     setProject,
+    setAiTool,
     startRojo,
     stopAll,
     startDevelopment,
