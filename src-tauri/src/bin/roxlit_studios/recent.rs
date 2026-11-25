@@ -119,4 +119,13 @@ mod tests {
         ));
         assert!(!is_session("C:/Users/Juan/Desktop/roxlit-notes.rbxl"));
     }
+
+    /// The prune loop's per-tick work, 1000 times (5.5 h of the live 20 s loop).
+    #[test]
+    #[ignore]
+    fn bench_recent_prune() {
+        crate::win::leak_bench("recent::prune()", 1000, || {
+            let _ = super::prune();
+        });
+    }
 }
