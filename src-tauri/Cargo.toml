@@ -36,5 +36,7 @@ name = "roxlit-mcp"
 path = "src/bin/roxlit_mcp.rs"
 
 [[bin]]
+# Kept outside src/bin: the Tauri bundler scans src/bin and, for a directory
+# bin (src/bin/<dir>/main.rs), adds a phantom "<dir>.exe" it then fails to find.
 name = "roxlit-studios"
-path = "src/bin/roxlit_studios/main.rs"
+path = "studios/main.rs"
