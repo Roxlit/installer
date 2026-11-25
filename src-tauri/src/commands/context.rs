@@ -177,7 +177,6 @@ pub fn configure_mcp(project_root: &Path, ai_tool: &str) -> Result<()> {
     Ok(())
 }
 
-/// Returns a human-readable name for the AI tool ID.
 /// Relative path of the context file each AI tool reads.
 pub fn context_file_name(ai_tool: &str) -> &'static str {
     match ai_tool {
@@ -189,6 +188,7 @@ pub fn context_file_name(ai_tool: &str) -> &'static str {
     }
 }
 
+/// Returns a human-readable name for the AI tool ID.
 pub fn tool_display_name(ai_tool: &str) -> &str {
     match ai_tool {
         "claude" => "Claude Code",

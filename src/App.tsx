@@ -195,7 +195,8 @@ export default function App() {
           discoveredProjects={discoveredProjects}
           onRecovered={(project) => {
             launcher.setProject(project);
-            if (project.aiTool) handleAiToolChange(project.aiTool);
+            // Only seed the preference on a fresh install; never override a chosen one
+            if (project.aiTool && !config?.aiTool) handleAiToolChange(project.aiTool);
             setMode("launcher");
             setTimeout(() => launcher.startDevelopment(), 300);
           }}
