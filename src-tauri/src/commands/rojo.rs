@@ -638,11 +638,21 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
         "AI-CONTEXT.md",
     ];
 
-    // Find the existing context file (if any)
-    let existing_file = context_files
-        .iter()
-        .map(|f| project_dir.join(f))
-        .find(|p| p.exists());
+    // The AI tool is a user-level preference, so it can differ from the tool
+    // the project was created with. The context file to keep current is the
+    // one the selected tool reads.
+    let ai_tool = crate::commands::config::user_ai_tool();
+    let tool_file = project_dir.join(crate::commands::context::context_file_name(&ai_tool));
+    let existing_file = Some(tool_file.clone()).filter(|p| p.exists());
+
+    // User notes source: the tool's own file, or (after a tool switch) the
+    // context file written for the previously used tool.
+    let notes_source = existing_file.clone().or_else(|| {
+        context_files
+            .iter()
+            .map(|f| project_dir.join(f))
+            .find(|p| p.exists())
+    });
 
     // Check if MCP binary is available (for context variant detection)
     let mcp_bin_name = if cfg!(target_os = "windows") { "roxlit-mcp.exe" } else { "roxlit-mcp" };
@@ -695,19 +705,6 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
         }
     };
 
-    // Read config to find ai_tool for this project
-    let ai_tool = dirs::home_dir()
-        .and_then(|h| std::fs::read_to_string(h.join(".roxlit").join("config.json")).ok())
-        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-        .and_then(|config| {
-            config["projects"]
-                .as_array()?
-                .iter()
-                .find(|p| p["path"].as_str() == Some(project_path))
-                .and_then(|p| p["aiTool"].as_str().map(String::from))
-        })
-        .unwrap_or_else(|| "claude".to_string());
-
     // Always ensure MCP config exists if binary is available (even if CLAUDE.md is up to date)
     ensure_mcp_config(project_dir, &ai_tool);
 
@@ -716,7 +713,7 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
     }
 
     // Extract user notes from existing file before regenerating
-    let user_notes = existing_file.as_ref().and_then(|path| {
+    let user_notes = notes_source.as_ref().and_then(|path| {
         let content = std::fs::read_to_string(path).ok()?;
         let marker = templates::USER_NOTES_MARKER;
         let marker_pos = content.find(marker)?;
@@ -732,13 +729,13 @@ fn ensure_ai_context(project_dir: &std::path::Path, project_path: &str) {
     let _ = crate::commands::context::generate_context(project_path, &ai_tool, project_name);
 
     // If user had custom notes, append them back to the regenerated file
-    if let (Some(notes), Some(path)) = (user_notes, &existing_file) {
-        if let Ok(new_content) = std::fs::read_to_string(path) {
+    if let Some(notes) = user_notes {
+        if let Ok(new_content) = std::fs::read_to_string(&tool_file) {
             // Replace the default "Your Notes" section with the user's saved notes
             if let Some(marker_pos) = new_content.find(templates::USER_NOTES_MARKER) {
                 let mut final_content = new_content[..marker_pos].to_string();
                 final_content.push_str(&notes);
-                let _ = std::fs::write(path, final_content);
+                let _ = std::fs::write(&tool_file, final_content);
             }
         }
     }

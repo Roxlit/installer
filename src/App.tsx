@@ -48,6 +48,8 @@ export default function App() {
             const updatedConfig = { ...loadedConfig, projects: validProjects };
             setConfig(updatedConfig);
             setUpdateDelayDays(updatedConfig.updateDelayDays ?? 7);
+            // Backend migrates the legacy per-project value into aiTool
+            launcher.setAiTool(updatedConfig.aiTool ?? validProjects[0].aiTool ?? "claude");
             const active =
               validProjects.find(
                 (p) => p.path === updatedConfig.lastActiveProject
@@ -86,6 +88,8 @@ export default function App() {
 
   const handleGoToLauncher = async (project: ProjectEntry) => {
     launcher.setProject(project);
+    // The tool picked in the wizard is now the user's preference (save_project persisted it)
+    if (project.aiTool) launcher.setAiTool(project.aiTool);
     setMode("launcher");
     try {
       await invoke("set_active_project", { path: project.path });
@@ -105,6 +109,16 @@ export default function App() {
       await invoke("set_active_project", { path: project.path });
     } catch {
       // Non-critical — project switch still works without persisting
+    }
+  };
+
+  const handleAiToolChange = async (aiTool: string) => {
+    launcher.setAiTool(aiTool);
+    setConfig((prev) => (prev ? { ...prev, aiTool } : prev));
+    try {
+      await invoke("set_ai_tool", { aiTool });
+    } catch {
+      // Non-critical — preference still applies for this session
     }
   };
 
@@ -151,7 +165,7 @@ export default function App() {
         <Launcher
           projectName={launcher.project.name}
           projectPath={launcher.project.path}
-          aiTool={launcher.project.aiTool}
+          aiTool={launcher.aiTool}
           rojoStatus={launcher.rojoStatus}
           rojoPort={launcher.rojoPort}
           logs={launcher.logs}
@@ -166,6 +180,7 @@ export default function App() {
           onUpdateDelayChange={handleUpdateDelayChange}
           allProjects={config?.projects ?? []}
           onProjectSwitch={handleProjectSwitch}
+          onAiToolChange={handleAiToolChange}
         />
       </div>
     );
@@ -180,6 +195,7 @@ export default function App() {
           discoveredProjects={discoveredProjects}
           onRecovered={(project) => {
             launcher.setProject(project);
+            if (project.aiTool) handleAiToolChange(project.aiTool);
             setMode("launcher");
             setTimeout(() => launcher.startDevelopment(), 300);
           }}
